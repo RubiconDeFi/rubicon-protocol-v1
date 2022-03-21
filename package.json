@@ -1,0 +1,35 @@
+{
+  "name": "rubicon-protocol-v1",
+  "version": "1.0.0",
+  "description": "The smart contracts of the Rubicon Protocol (v1)",
+  "main": "truffle-config.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "truffle test",
+    "ganache": "ganache-cli --gasLimit=0x1fffffffffffff --gasPrice=0x1 --defaultBalanceEther 9000"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RubiconDeFi/rubicon-protocol-v1.git"
+  },
+  "keywords": [
+    "DeFi",
+    "ethereum",
+    "rubicon",
+    "clob"
+  ],
+  "author": "Rubicon DeFi, Inc. - Benjamin Hughes",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/RubiconDeFi/rubicon-protocol-v1/issues"
+  },
+  "homepage": "https://github.com/RubiconDeFi/rubicon-protocol-v1#readme",
+  "dependencies": {
+    "@openzeppelin/contracts": "3.4",
+    "chai": "^4.3.6",
+    "dotenv": "^16.0.0",
+    "truffle": "^5.5.5"
+  }
+}
