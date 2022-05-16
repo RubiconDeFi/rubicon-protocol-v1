@@ -8,10 +8,8 @@ pragma abicoder v2;
 import "./RubiconMarket.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
-import "./libraries/ABDKMath64x64.sol";
 import "./peripheral_contracts/WETH9.sol"; // @unsupported: ovm
-import "./rubiconPools/BathToken.sol";
-import "./libraries/TransferHelper.sol";
+import "./interfaces/IBathToken.sol";
 
 ///@dev this contract is a high-level router that utilizes Rubicon smart contracts to provide
 ///@dev added convenience and functionality when interacting with the Rubicon protocol
@@ -106,9 +104,9 @@ contract RubiconRouter {
                 continue;
             }
             uint256 nextBestAsk = RubiconMarket(_RubiconMarketAddress)
-                .getWorseOffer(lastAsk);
+            .getWorseOffer(lastAsk);
             uint256 nextBestBid = RubiconMarket(_RubiconMarketAddress)
-                .getWorseOffer(lastBid);
+            .getWorseOffer(lastBid);
             (uint256 ask_pay_amt, , uint256 ask_buy_amt, ) = RubiconMarket(
                 _RubiconMarketAddress
             ).getOffer(nextBestAsk);
@@ -330,6 +328,8 @@ contract RubiconRouter {
         uint256 max_fill_amount,
         uint256 expectedMarketFeeBPS
     ) external payable returns (uint256 fill) {
+        address _weth = address(wethAddress);
+        uint256 _before = ERC20(_weth).balanceOf(address(this));
         uint256 max_fill_withFee = max_fill_amount.add(
             max_fill_amount.mul(expectedMarketFeeBPS).div(10000)
         );
@@ -345,13 +345,16 @@ contract RubiconRouter {
             ERC20(wethAddress),
             max_fill_amount
         );
-        if (max_fill_amount > fill) {
-            emit LogNote("returned fill", fill);
-
-            // ERC20(pay_gem).transfer(msg.sender, max_fill_amount - fill);
-        }
         ERC20(buy_gem).transfer(msg.sender, buy_amt);
-        return fill;
+
+        uint256 _after = ERC20(_weth).balanceOf(address(this));
+        uint256 delta = _after - _before;
+
+        // Return unspent coins to sender
+        if (delta > 0) {
+            WETH9(wethAddress).withdraw(delta);
+            msg.sender.transfer(delta);
+        }
     }
 
     // Paying ERC20 to buy native ETH
@@ -454,7 +457,7 @@ contract RubiconRouter {
         payable
         returns (uint256 newShares)
     {
-        IERC20 target = BathToken(targetPool).underlyingToken();
+        IERC20 target = IBathToken(targetPool).underlyingToken();
         require(target == ERC20(wethAddress), "target pool not weth pool");
         require(msg.value >= amount, "didnt send enough eth");
 
@@ -463,7 +466,7 @@ contract RubiconRouter {
         }
 
         WETH9(wethAddress).deposit{value: amount}();
-        newShares = BathToken(targetPool).deposit(amount);
+        newShares = IBathToken(targetPool).deposit(amount);
         //Send back bathTokens to sender
         ERC20(targetPool).transfer(msg.sender, newShares);
     }
@@ -474,15 +477,16 @@ contract RubiconRouter {
         payable
         returns (uint256 withdrawnWETH)
     {
-        IERC20 target = BathToken(targetPool).underlyingToken();
+        IERC20 target = IBathToken(targetPool).underlyingToken();
         require(target == ERC20(wethAddress), "target pool not weth pool");
         require(
-            BathToken(targetPool).balanceOf(msg.sender) >= shares,
+            IBathToken(targetPool).balanceOf(msg.sender) >= shares,
             "don't own enough shares"
         );
-        BathToken(targetPool).transferFrom(msg.sender, address(this), shares);
-        withdrawnWETH = BathToken(targetPool).withdraw(shares);
+        IBathToken(targetPool).transferFrom(msg.sender, address(this), shares);
+        withdrawnWETH = IBathToken(targetPool).withdraw(shares);
         WETH9(wethAddress).withdraw(withdrawnWETH);
+
         //Send back withdrawn native eth to sender
         msg.sender.transfer(withdrawnWETH);
     }

@@ -186,19 +186,6 @@ contract("Rubicon Router Test", async function (accounts) {
         { from: accounts[2] }
       );
 
-      // logIndented("got this expect", web3.utils.fromWei(expect))
-      // await router.swap(
-      //   web3.utils.toWei((0.25).toString()),
-      //   web3.utils.toWei((0.02495).toString()), // after fees, simply * 1 - 0.2%
-      //   [(await asset1).address, DAIInstance.address, (await asset2).address],
-      //   20,
-      //   { from: accounts[2] }
-      // );
-
-      // assert.equal(
-      //   (await (await asset2).balanceOf(accounts[2])).toString(),
-      //   web3.utils.toWei((0.02495).toString())
-      // );
       assert.equal(expect.toString(), web3.utils.toWei((0.02495).toString()));
     });
   });
@@ -248,7 +235,7 @@ contract("Rubicon Router Test", async function (accounts) {
   describe("Random", async function () {
     // make a thick bid and ask for Asset_1 / DAI
 
-    it("WIP - getBook returns data on the real-time order book", async function () {
+    it("WIP - getBook returns data we like?", async function () {
       let result = await router.getBookFromPair(
         asset1.address,
         asset2.address,

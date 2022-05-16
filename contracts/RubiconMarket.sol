@@ -2,7 +2,7 @@
 /// This contract is a derivative work of the open-source work of Oasis DEX: https://github.com/OasisDEX/oasis
 
 /// @title RubiconMarket.sol
-/// @notice Please see the repository for this code at https://github.com/RubiconDeFi/rubicon_protocol;
+/// @notice Please see the repository for this code at https://github.com/RubiconDeFi/rubicon-protocol-v1;
 
 pragma solidity =0.7.6;
 
@@ -292,6 +292,7 @@ contract SimpleMarket is EventfulMarket, DSMath {
             return false;
         }
 
+        // Fee logic added on taker trades
         uint256 fee = mul(spend, feeBPS) / 10000;
         require(
             _offer.buy_gem.transferFrom(msg.sender, feeTo, fee),
@@ -528,7 +529,9 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
     /// @dev Below is variable to allow for a proxy-friendly constructor
     bool public initialized;
 
+    /// @dev unused deprecated variable for applying a token distribution on top of a trade
     bool public AqueductDistributionLive;
+    /// @dev unused deprecated variable for applying a token distribution of this token on top of a trade
     address public AqueductAddress;
 
     struct sortInfo {
@@ -546,9 +549,10 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
 
     /// @dev Proxy-safe initialization of storage
     function initialize(bool _live, address _feeTo) public {
-        // require(msg.sender == ___deployer____);
         require(!initialized, "contract is already initialized");
         AqueductDistributionLive = _live;
+
+        /// @notice The market fee recipient
         feeTo = _feeTo;
 
         owner = msg.sender;
@@ -556,6 +560,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
 
         /// @notice The starting fee on taker trades in basis points
         feeBPS = 20;
+
         initialized = true;
         matchingEnabled = true;
         buyEnabled = true;
@@ -612,8 +617,9 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
     ) public override returns (uint256) {
         require(!locked, "Reentrancy attempt");
 
-        function(uint256, ERC20, uint256, ERC20)
-            returns (uint256) fn = matchingEnabled ? _offeru : super.offer;
+
+            function(uint256, ERC20, uint256, ERC20) returns (uint256) fn
+         = matchingEnabled ? _offeru : super.offer;
         return fn(pay_amt, pay_gem, buy_amt, buy_gem);
     }
 
@@ -1227,6 +1233,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
         return true;
     }
 
+    /// @dev unused deprecated function for applying a token distribution on top of a trade
     function setAqueductDistributionLive(bool live)
         external
         auth
@@ -1236,6 +1243,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
         return true;
     }
 
+    /// @dev unused deprecated variable for applying a token distribution on top of a trade
     function setAqueductAddress(address _Aqueduct)
         external
         auth

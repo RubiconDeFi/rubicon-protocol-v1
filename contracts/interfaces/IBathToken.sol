@@ -41,6 +41,8 @@ interface IBathToken is IERC20 {
 
     function setMarket(address newRubiconMarket) external;
 
+    function setBonusToken(address newBonusToken) external;
+
     function setFeeBPS(uint256 _feeBPS) external;
 
     function setFeeTo(address _feeTo) external;
@@ -52,6 +54,10 @@ interface IBathToken is IERC20 {
     function underlyingBalance() external view returns (uint256);
 
     function deposit(uint256 amount) external returns (uint256 shares);
+
+    function deposit(uint256 assets, address receiver)
+        external
+        returns (uint256 shares);
 
     function withdraw(uint256 shares) external returns (uint256 amount);
 
