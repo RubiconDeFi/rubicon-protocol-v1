@@ -195,24 +195,25 @@ contract("Rubicon Router", (accounts) => {
       assert.equal(bids[1][2].toNumber(), 4);
       assert.equal(bids[2][2].toNumber(), 6);
     });
-    it("function getBestOfferAndInfo(address asset, address quote) public view returns ( uint256, //id uint256, ERC20, uint256, ERC20)", async () => {});
-    it("function approveAssetOnMarket(address toApprove) public {", async () => {}); //right security in place?
-    it("function getExpectedSwapFill()", async () => {});
-    it("function swap() public returns (uint) **", async () => {});
-    it("function _swap( uint256 pay_amt, uint256 buy_amt_min, address[] calldata route,  uint256 expectedMarketFeeBPS, address to) internal returns (uint256) {", async () => {});
-
-    // Are these foolish to have in? Is this a dust solution that makes sense?
-    it("function swapEntireBalance( uint256 buy_amt_min, address[] calldata route, // First address is what is being payed, Last address is what is being bought uint256 expectedMarketFeeBPS) external returns (uint256) {", async () => {});
-    it("function maxBuyAllAmount( ERC20 buy_gem, ERC20 pay_gem, uint256 max_fill_amount) external returns (uint256 fill) {", async () => {});
-    it("function maxSellAllAmount( ERC20 pay_gem, ERC20 buy_gem, uint256 min_fill_amount) external returns (uint256 fill) {", async () => {});
-  });
+   });
   describe("Case-Specific Tests", async function () {
     it("Random: ERC-20 Token with faucet behaves as expected", async () => {
       let decimals = 18;
-      let newTWF = await TokenWithFaucet.new(accounts[3], "Test Coin", "TEST", decimals);
-      assert.equal(await (await newTWF).balanceOf(accounts[3]), 1000 * (10 ** decimals));
-      await (await newTWF).faucet({from: accounts[3]});
-      assert.equal(await (await newTWF).balanceOf(accounts[3]), 2 * (1000 * (10 ** decimals))); 
+      let newTWF = await TokenWithFaucet.new(
+        accounts[3],
+        "Test Coin",
+        "TEST",
+        decimals
+      );
+      assert.equal(
+        await (await newTWF).balanceOf(accounts[3]),
+        1000 * 10 ** decimals
+      );
+      await (await newTWF).faucet({ from: accounts[3] });
+      assert.equal(
+        await (await newTWF).balanceOf(accounts[3]),
+        2 * (1000 * 10 ** decimals)
+      );
     });
     // Approach:
     // Have a user with native ETH, track their balances of everything before and after
@@ -335,6 +336,7 @@ contract("Rubicon Router", (accounts) => {
           from: accounts[0],
         }
       );
+
       // Offer and expect to fill in native ETH
       await rubiconRouterInstance.offerForETH(
         web3.utils.toWei("1"),
@@ -345,26 +347,38 @@ contract("Rubicon Router", (accounts) => {
       );
       let ethBalanceAfter = await web3.eth.getBalance(accounts[0]);
       let delta = ethBalanceAfter - ethBalanceBefore;
-      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.00046")));
+      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.00099")));
     });
     it("[Native ETH] - A user can buyAllAmount with native ETH", async () => {
-      let ethBalanceBefore = await web3.eth.getBalance(accounts[1]);
+      // let ethBalanceBefore = await web3.eth.getBalance(accounts[1]);
+      const max_fill_amount = web3.utils.toWei("0.1");
 
-      let buyAmt = await rubiconMarketInstance.getBuyAmount(DAIInstance.address, WETHInstance.address, web3.utils.toWei("0.1"));
-      let payAmt = await rubiconMarketInstance.getPayAmount( WETHInstance.address,DAIInstance.address, web3.utils.toWei("9")); // This is equal to what resulting dai we get...
+      let buyAmt = await rubiconMarketInstance.getBuyAmount(
+        DAIInstance.address,
+        WETHInstance.address,
+        max_fill_amount
+      );
+      let payAmt = await rubiconMarketInstance.getPayAmount(
+        WETHInstance.address,
+        DAIInstance.address,
+        web3.utils.toWei("9")
+      ); // This is equal to what resulting dai we get...
       // logIndented("Expected payAmt", payAmt.toString());
 
       await rubiconRouterInstance.buyAllAmountWithETH(
         DAIInstance.address,
-        web3.utils.toWei("9"),
-        web3.utils.toWei("0.1"),
+        buyAmt,
+        max_fill_amount,
         20,
         { from: accounts[1], value: web3.utils.toWei("0.1002") }
-      ); 
-      let ethBalanceAfter = await web3.eth.getBalance(accounts[1]);
-      let delta = ethBalanceBefore - ethBalanceAfter;
+      );
+      // let ethBalanceAfter = await web3.eth.getBalance(accounts[1]);
+      // let delta = ethBalanceBefore - ethBalanceAfter;
       // logIndented("spent this much eth", web3.utils.fromWei(delta.toString()));
-      assert.equal((await DAIInstance.balanceOf(accounts[1])).toString(), buyAmt.toString());
+      assert.equal(
+        (await DAIInstance.balanceOf(accounts[1])).toString(),
+        buyAmt.toString()
+      );
       // assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.1")));
     });
     it("[Native ETH] - A user can buyAllAmount for native ETH", async () => {
@@ -380,29 +394,22 @@ contract("Rubicon Router", (accounts) => {
       //Inputting fee reduced amount vs
       await rubiconRouterInstance.buyAllAmountForETH(
         await web3.utils.toWei("0.0892"),
-        DAIInstance.address, 
+        DAIInstance.address,
         web3.utils.toWei("8.982"), // 99.8% to account for fee
         { from: accounts[0] }
       );
       let ethBalanceAfter = await web3.eth.getBalance(accounts[0]);
       let delta = ethBalanceAfter - ethBalanceBefore;
-      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.088")));
+      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.0891999")));
     });
     it("[Native ETH] - A user can cancel for native ETH", async () => {
       //admin cancels id 7 and expects native eth
       let ethBalanceBefore = await web3.eth.getBalance(accounts[6]);
       //Inputting fee reduced amount vs
-      await rubiconRouterInstance.cancelForETH(
-        7, 
-        { from: accounts[6] }
-      );
+      await rubiconRouterInstance.cancelForETH(7, { from: accounts[6] });
       let ethBalanceAfter = await web3.eth.getBalance(accounts[6]);
       let delta = ethBalanceAfter - ethBalanceBefore;
-      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.099")));
-    }); 
-  });
-  describe("Event Logging Tests", async function () {
-    it("We are logging swaps so can track % of trades that are swaps", async () => {});
-    // ANy more?
+      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.099999")));
+    });
   });
 });

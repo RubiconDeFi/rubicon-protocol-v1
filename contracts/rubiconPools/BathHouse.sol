@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-/// @author Benjamin Hughes - Rubicon
-/// @notice This contract acts as the admin for the Rubicon Pools system
-/// @notice The BathHouse approves library contracts and initializes bathTokens
-/// @notice this contract has protocol-wide, sensitive, and useful getters to map assets <> bathTokens TODO
+/// @title  The administrator contract of Rubicon Pools
+/// @author Rubicon DeFi Inc. - bghughes.eth
+/// @notice The BathHouse initializes proxy-wrapped bathTokens, manages approved strategists, and sets system variables
 
 pragma solidity =0.7.6;
 
-// import "./BathPair.sol";
 import "./BathToken.sol";
 import "../interfaces/IBathPair.sol";
 import "../interfaces/IBathToken.sol";
@@ -16,39 +14,54 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/proxy/TransparentUpgradeableProxy.sol";
 
 contract BathHouse {
+    /// *** Storage Variables ***
+
+    /// @notice Rubicon Bath House
     string public name;
 
+    /// @notice The administrator of the Bath House contract
     address public admin;
+
+    /// @notice The proxy administrator of Bath Tokens
     address public proxyManager;
 
+    /// @notice The core Rubicon Market of the Pools system
     address public RubiconMarketAddress;
 
-    // List of approved strategies
+    /// @notice A mapping of approved strategists to access Pools liquidity
     mapping(address => bool) public approvedStrategists;
 
+    /// @notice The initialization status of BathHouse
     bool public initialized;
-    bool public permissionedStrategists; //if true strategists are permissioned
 
-    // Key, system-wide risk parameters for Pools
-    uint256 public reserveRatio; // proportion of the pool that must remain present in the pair
+    /// @notice If true, strategists are permissioned and must be approved by admin
+    bool public permissionedStrategists;
 
-    // The delay after which unfilled orders are cancelled
-    uint256 public timeDelay; // *Deprecate post Optimism*??? Presently unused
+    /// @notice Key, system-wide risk parameter for all liquity Pools
+    /// @notice This represents the proportion of a pool's underlying assets that must remain in the pool
+    /// @dev This protects a run on the bank scenario and ensures users can withdraw while allowing funds to be utilized for yield in the market
+    uint256 public reserveRatio;
 
-    //NEW
-    address public approvedPairContract; // Ensure that only one BathPair.sol is in operation
+    /// @notice A variable time delay after which a strategist must return funds to the Bath Token
+    uint256 public timeDelay;
 
-    //NEW
+    /// @notice The lone Bath Pair contract of the system which acts as the strategist entry point and logic contract
+    address public approvedPairContract;
+
+    /// @notice The basis point fee that is paid to strategists from LPs on capital that is successfully rebalanced to a Bath Token
     uint8 public bpsToStrategists;
 
-    //NEW
-    mapping(address => address) public tokenToBathToken; //Source of truth mapping that logs all ERC20 Liquidity pools underlying asset => bathToken Address
+    /// @notice Key mapping for determining the address of a Bath Token based on its underlying asset
+    /// @dev Source of truth mapping that logs all ERC20 Liquidity pools underlying asset => bathToken Address
+    mapping(address => address) public tokenToBathToken;
 
-    // The BathToken.sol implementation that any new bathTokens become
+    /// @notice The BathToken.sol implementation that any new bathTokens inherit
+    /// @dev The implementation of any ~newly spawned~ proxy-wrapped Bath Tokens via _createBathToken
     address public newBathTokenImplementation;
 
-    //NEW
-    // Event to log new BathPairs and their bathTokens
+    /// *** Events ***
+
+    /// @notice An event that signals the creation of a new Bath Token
     event LogNewBathToken(
         address underlyingToken,
         address bathTokenAddress,
@@ -57,6 +70,7 @@ contract BathHouse {
         address bathTokenCreator
     );
 
+    /// @notice An event that signals the permissionless spawning of a new Bath Token
     event LogOpenCreationSignal(
         ERC20 newERC20Underlying,
         address spawnedBathToken,
@@ -67,12 +81,19 @@ contract BathHouse {
         address signaler
     );
 
+    /// *** Modifiers ***
+
+    /// @notice This modifier enforces that only the admin can call these functions
     modifier onlyAdmin() {
         require(msg.sender == admin);
         _;
     }
 
-    /// @dev Proxy-safe initialization of storage
+    /// *** External Functions ***
+
+    /// @notice The constructor-like initialization function
+    /// @dev Proxy-safe initialization of storage that sets key storage variables
+    /// @dev Admin is set to msg.sender
     function initialize(
         address market,
         uint256 _reserveRatio,
@@ -84,81 +105,38 @@ contract BathHouse {
         name = "Rubicon Bath House";
         admin = msg.sender;
         timeDelay = _timeDelay;
+
+        // Set Bath Token reserve ratio globally
         require(_reserveRatio <= 100);
         require(_reserveRatio > 0);
         reserveRatio = _reserveRatio;
 
+        // Set BPS reward fee for successful strategist market-making
+        /// @notice [(10000 - {bpsToStrategists}) / 10000] BPS of MM-ing activity is passed to users
         bpsToStrategists = 20;
 
+        // Set key storage variables
         RubiconMarketAddress = market;
-        approveStrategist(admin);
         permissionedStrategists = true;
-        initialized = true;
         newBathTokenImplementation = _newBathTokenImplementation;
         proxyManager = _proxyAdmin;
+
+        // Automatically approve admin as an approved strategist
+        approveStrategist(admin);
+
+        // Complete contract instantiation
+        initialized = true;
     }
 
-    // ** Bath Token Actions **
-    // **Logs the publicmapping of new ERC20 to resulting bathToken
-    function createBathToken(ERC20 underlyingERC20, address _feeAdmin)
-        external
-        onlyAdmin
-        returns (address newBathTokenAddress)
-    {
-        newBathTokenAddress = _createBathToken(underlyingERC20, _feeAdmin);
-    }
-
-    // **Logs the publicmapping of new ERC20 to resulting bathToken
-    function _createBathToken(ERC20 underlyingERC20, address _feeAdmin)
-        internal
-        returns (address newBathTokenAddress)
-    {
-        require(initialized, "BathHouse not initialized");
-        address _underlyingERC20 = address(underlyingERC20);
-        require(
-            _underlyingERC20 != address(0),
-            "Cant create bathToken for zero address"
-        );
-        // Check that it isn't already logged in the registry
-        require(
-            tokenToBathToken[_underlyingERC20] == address(0),
-            "bathToken already exists"
-        );
-
-        // Creates a new bathToken that is upgradeable by the proxyManager
-        require(
-            newBathTokenImplementation != address(0),
-            "no implementation set for bathTokens"
-        );
-        bytes memory _initData = abi.encodeWithSignature(
-            "initialize(address,address,address)",
-            _underlyingERC20,
-            (RubiconMarketAddress),
-            (_feeAdmin)
-        );
-        TransparentUpgradeableProxy newBathToken = new TransparentUpgradeableProxy(
-                newBathTokenImplementation,
-                proxyManager,
-                _initData
-            );
-
-        newBathTokenAddress = address(newBathToken);
-        tokenToBathToken[_underlyingERC20] = newBathTokenAddress;
-        emit LogNewBathToken(
-            _underlyingERC20,
-            newBathTokenAddress,
-            _feeAdmin,
-            block.timestamp,
-            msg.sender
-        );
-    }
-
-    /// Permissionless entry point to spawn a bathToken while posting liquidity to a ~pair~
-    /// The user must approve the bathHouse to spend their ERC20s
+    /// @notice Permissionless entry point to spawn a Bath Token while posting liquidity to a ~pair of Bath Tokens~
+    /// @notice Please note, creating a Bath Token in this fashion ~does not~ gaurentee markets will be made for the new pair. This function signals the desire to have a new pair supported on Rubicon for strategists to consider market-making for
+    /// @notice The best desiredPairedAsset to select is a popular quote currency. Many traditional systems quote in USD while the ETH quote is superior - the choice is yours sweet msg.sender
+    /// @dev The user must approve the bathHouse to spend their ERC20s
+    /// @dev The user can only spawn a Bath Token for an ERC20 that is not yet in the Pools system and they must post liquidity on the other side of the pair for an ~extant Bath Token~
     function openBathTokenSpawnAndSignal(
         ERC20 newBathTokenUnderlying,
         uint256 initialLiquidityNew, // Must approve this contract to spend
-        ERC20 desiredPairedAsset, // MUST be paired with an existing quote for v1
+        ERC20 desiredPairedAsset, // Must be paired with an existing quote for v1
         uint256 initialLiquidityExistingBathToken
     ) external returns (address newBathToken) {
         // Check that it doesn't already exist
@@ -172,7 +150,7 @@ contract BathHouse {
         );
 
         // Spawn a bathToken for the new asset
-        address newOne = _createBathToken(newBathTokenUnderlying, address(0)); // NOTE: address(0) as feeAdmin means fee is paid to pool
+        address newOne = _createBathToken(newBathTokenUnderlying, address(0)); // NOTE: address(0) as feeAdmin means fee is paid to pool holders
 
         // Deposit initial liquidity posted of newBathTokenUnderlying
         require(
@@ -183,9 +161,11 @@ contract BathHouse {
             ),
             "Couldn't transferFrom your initial liquidity - make sure to approve BathHouse.sol"
         );
+
         newBathTokenUnderlying.approve(newOne, initialLiquidityNew);
-        uint256 newBTShares = IBathToken(newOne).deposit(initialLiquidityNew);
-        IBathToken(newOne).transfer(msg.sender, newBTShares);
+
+        // Deposit assets and send Bath Token shares to msg.sender
+        IBathToken(newOne).deposit(initialLiquidityNew, msg.sender);
 
         // desiredPairedAsset must be pulled and deposited into bathToken
         require(
@@ -201,10 +181,12 @@ contract BathHouse {
             pairedPool,
             initialLiquidityExistingBathToken
         );
-        uint256 pairedPoolShares = IBathToken(pairedPool).deposit(
-            initialLiquidityExistingBathToken
+
+        // Deposit assets and send Bath Token shares to msg.sender
+        IBathToken(pairedPool).deposit(
+            initialLiquidityExistingBathToken,
+            msg.sender
         );
-        IBathToken(pairedPool).transfer(msg.sender, pairedPoolShares);
 
         // emit an event describing the new pair, underlyings and bathTokens
         emit LogOpenCreationSignal(
@@ -220,7 +202,18 @@ contract BathHouse {
         newBathToken = newOne;
     }
 
-    // A migrationFunction that allows writing arbitrarily to tokenToBathToken
+    /// ** Admin-Only Functions **
+
+    /// @notice An admin-only function to create a new Bath Token for any ERC20
+    function createBathToken(ERC20 underlyingERC20, address _feeAdmin)
+        external
+        onlyAdmin
+        returns (address newBathTokenAddress)
+    {
+        newBathTokenAddress = _createBathToken(underlyingERC20, _feeAdmin);
+    }
+
+    /// @notice A migration function that allows the admin to write arbitrarily to tokenToBathToken
     function adminWriteBathToken(ERC20 overwriteERC20, address newBathToken)
         external
         onlyAdmin
@@ -235,7 +228,7 @@ contract BathHouse {
         );
     }
 
-    /// Function to initialize the ~lone~ bathPair contract for the Rubicon protocol
+    /// @notice Function to initialize and store the address of the ~lone~ bathPair contract for the Rubicon protocol
     function initBathPair(
         address _bathPairAddress,
         uint256 _maxOrderSizeBPS,
@@ -256,25 +249,34 @@ contract BathHouse {
         approvedPairContract = newPair;
     }
 
+    /// @notice Admin-only function to set a new Admin
     function setBathHouseAdmin(address newAdmin) external onlyAdmin {
         admin = newAdmin;
     }
 
+    /// @notice Admin-only function to approve a new permissioned strategist
+    function approveStrategist(address strategist) public onlyAdmin {
+        approvedStrategists[strategist] = true;
+    }
+
+    /// @notice Admin-only function to set whether or not strategists are permissioned
     function setPermissionedStrategists(bool _new) external onlyAdmin {
         permissionedStrategists = _new;
     }
 
-    // Setter Functions for paramters - onlyAdmin
+    /// @notice Admin-only function to set timeDelay
     function setCancelTimeDelay(uint256 value) external onlyAdmin {
         timeDelay = value;
     }
 
+    /// @notice Admin-only function to set reserveRatio
     function setReserveRatio(uint256 rr) external onlyAdmin {
         require(rr <= 100);
         require(rr > 0);
         reserveRatio = rr;
     }
 
+    /// @notice Admin-only function to set a Bath Token's timeDelay
     function setBathTokenMarket(address bathToken, address newMarket)
         external
         onlyAdmin
@@ -282,6 +284,15 @@ contract BathHouse {
         IBathToken(bathToken).setMarket(newMarket);
     }
 
+    /// @notice Admin-only function to add a bonus token to a Bath Token's reward schema
+    function setBonusToken(address bathToken, address newBonusToken)
+        external
+        onlyAdmin
+    {
+        IBathToken(bathToken).setBonusToken(newBonusToken);
+    }
+
+    /// @notice Admin-only function to set a Bath Token's Bath House admin
     function setBathTokenBathHouse(address bathToken, address newAdmin)
         external
         onlyAdmin
@@ -289,6 +300,7 @@ contract BathHouse {
         IBathToken(bathToken).setBathHouse(newAdmin);
     }
 
+    /// @notice Admin-only function to set a Bath Token's feeBPS
     function setBathTokenFeeBPS(address bathToken, uint256 newBPS)
         external
         onlyAdmin
@@ -296,6 +308,8 @@ contract BathHouse {
         IBathToken(bathToken).setFeeBPS(newBPS);
     }
 
+    /// @notice Admin-only function to approve the Bath Token's underlying token on the assigned market
+    /// @dev required in case the market address ever changes.. #battleScars
     function bathTokenApproveSetMarket(address targetBathToken)
         external
         onlyAdmin
@@ -303,24 +317,20 @@ contract BathHouse {
         IBathToken(targetBathToken).approveMarket();
     }
 
-    function setFeeTo(address bathToken, address feeTo) external onlyAdmin {
-        IBathToken(bathToken).setFeeTo(feeTo);
-    }
-
-    function setBathPairMOSBPS(address bathPair, uint16 mosbps)
+    /// @notice Admin-only function to set a Bath Token's fee recipient (typically the Bath Token itself)
+    function setBathTokenFeeTo(address bathToken, address feeTo)
         external
         onlyAdmin
     {
-        IBathPair(bathPair).setMaxOrderSizeBPS(mosbps);
+        IBathToken(bathToken).setFeeTo(feeTo);
     }
 
-    function setBathPairSCN(address bathPair, int128 val) external onlyAdmin {
-        IBathPair(bathPair).setShapeCoefNum(val);
-    }
-
+    /// @notice Admin-only function to set a Bath Token's target Rubicon Market
     function setMarket(address newMarket) external onlyAdmin {
         RubiconMarketAddress = newMarket;
     }
+
+    /// *** View Functions ***
 
     // Getter Functions for parameters
     function getMarket() external view returns (address) {
@@ -335,7 +345,7 @@ contract BathHouse {
         return timeDelay;
     }
 
-    // Return the address of any bathToken in the system with this corresponding underlying asset
+    /// @notice Returns the address of any bathToken in the system based on its corresponding underlying asset
     function getBathTokenfromAsset(ERC20 asset) public view returns (address) {
         return tokenToBathToken[address(asset)];
     }
@@ -344,7 +354,9 @@ contract BathHouse {
         return bpsToStrategists;
     }
 
-    // ** Security Checks used throughout Pools **
+    /// *** System Security Checks ***
+
+    /// @notice A function to check whether or not an address is an approved strategist
     function isApprovedStrategist(address wouldBeStrategist)
         external
         view
@@ -360,11 +372,69 @@ contract BathHouse {
         }
     }
 
+    /// @notice A function to check whether or not an address is the approved system instance of BathPair.sol
     function isApprovedPair(address pair) public view returns (bool outcome) {
         pair == approvedPairContract ? outcome = true : outcome = false;
     }
 
-    function approveStrategist(address strategist) public onlyAdmin {
-        approvedStrategists[strategist] = true;
+    /// *** Internal Functions ***
+
+    /// @dev Low-level functionality to spawn a Bath Token using the OZ Transparent Upgradeable Proxy standard
+    /// @param underlyingERC20 The underlying ERC-20 asset that underlies the newBathTokenAddress
+    /// @param _feeAdmin Recipient of pool withdrawal fees, typically the pool itself
+    function _createBathToken(ERC20 underlyingERC20, address _feeAdmin)
+        internal
+        returns (address newBathTokenAddress)
+    {
+        require(initialized, "BathHouse not initialized");
+        address _underlyingERC20 = address(underlyingERC20);
+        require(
+            _underlyingERC20 != address(0),
+            "Cant create bathToken for zero address"
+        );
+
+        // Check that it isn't already logged in the registry
+        require(
+            tokenToBathToken[_underlyingERC20] == address(0),
+            "bathToken already exists"
+        );
+
+        // Creates a new bathToken that is upgradeable by the proxyManager
+        require(
+            newBathTokenImplementation != address(0),
+            "no implementation set for bathTokens"
+        );
+
+        // Note, the option of a fee recipient for pool withdrawls exists. For all pools this is set to the pool itself in production and is visible via ~feeTo~ on any respective contract
+        // Note, fee admin presently ignored in the Bath Token initialization() call via defaulting to itself; though, this is still upgradeable by the Bath House admin via
+        bytes memory _initData = abi.encodeWithSignature(
+            "initialize(address,address,address)",
+            _underlyingERC20,
+            (RubiconMarketAddress),
+            (_feeAdmin)
+        );
+
+
+            TransparentUpgradeableProxy newBathToken
+         = new TransparentUpgradeableProxy(
+            newBathTokenImplementation,
+            proxyManager,
+            _initData
+        );
+
+        // New Bath Token Address
+        newBathTokenAddress = address(newBathToken);
+
+        // Write to source-of-truth router mapping for this ERC-20 => Bath Token
+        tokenToBathToken[_underlyingERC20] = newBathTokenAddress;
+
+        // Log Data
+        emit LogNewBathToken(
+            _underlyingERC20,
+            newBathTokenAddress,
+            _feeAdmin,
+            block.timestamp,
+            msg.sender
+        );
     }
 }

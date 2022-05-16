@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-/// @author Benjamin Hughes - Rubicon
+/// @title Strategist's Entrypoint to Rubicon Pools
+/// @author Rubicon DeFi Inc. - bghughes.eth
 /// @notice This contract allows a strategist to use user funds in order to market make for a Rubicon pair
 /// @notice The BathPair is the admin for the pair's liquidity and has many security checks in place
 /// @notice This contract is also where strategists claim rewards for successful market making
@@ -13,34 +14,50 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "../interfaces/IBathToken.sol";
 import "../interfaces/IBathHouse.sol";
 import "../interfaces/IRubiconMarket.sol";
-import "../libraries/ABDKMath64x64.sol";
 import "../interfaces/IStrategistUtility.sol";
 
 contract BathPair {
+    /// *** Libraries ***
     using SafeMath for uint256;
     using SafeMath for uint16;
 
+    /// *** Storage Variables ***
+
+    /// @notice The Bath House admin of this contract; used with onlyBathHouse()
     address public bathHouse;
+
+    /// @notice The Rubicon Market strategists direct all activity towards. There is only one market, RubiconMarket.sol, in the Rubicon Protocol
     address public RubiconMarketAddress;
 
+    /// @notice The initialization status of BathPair
     bool public initialized;
 
-    int128 internal shapeCoefNum;
-    uint256 public maxOrderSizeBPS;
+    /// @dev Keeping deprecated variables maintains consistent network-agnostic contract abis when moving to new chains and versions
+    int128 internal deprecatedStorageVarKept420Proxy;
 
-    uint256 internal last_stratTrade_id; // Variable used to increment strategist trade IDs
+    /// @notice Intentionally unused DEPRECATED STORAGE VARIABLE to maintain contiguous state on proxy-wrapped contracts. Consider it a beautiful scar of incremental progress 📈
+    /// @dev Keeping deprecated variables maintains consistent network-agnostic contract abis when moving to new chains and versions
+    uint256 public deprecatedStorageVarKept4Proxy;
 
+    /// @dev The id of the last StrategistTrade made by any strategist on this contract
+    /// @dev This value is globally unique, and increments with every trade
+    uint256 internal last_stratTrade_id;
+
+    /// @notice The total amount of successful offer fills that all strategists have made for a given asset
     mapping(address => uint256) public totalFillsPerAsset;
 
-    // Unique id => StrategistTrade created in marketMaking call
+    /// @notice Unique id => StrategistTrade created in marketMaking call
     mapping(uint256 => StrategistTrade) public strategistTrades;
-    // Map a strategist to their outstanding order IDs
+
+    /// @notice Map a strategist to their outstanding order IDs
     mapping(address => mapping(address => mapping(address => uint256[])))
         public outOffersByStrategist;
 
-    /// @dev Tracks the fill amounts on a per-asset basis of a strategist
-    /// Note: strategist => erc20asset => fill amount per asset;
+    /// @notice Tracks the market-kaing fill amounts on a per-asset basis of a strategist
+    /// @dev strategist => erc20asset => fill amount per asset;
     mapping(address => mapping(address => uint256)) public strategist2Fills;
+
+    /// *** Structs ***
 
     struct order {
         uint256 pay_amt;
@@ -49,7 +66,6 @@ contract BathPair {
         IERC20 buy_gem;
     }
 
-    // Pair agnostic
     struct StrategistTrade {
         uint256 askId;
         uint256 askPayAmt;
@@ -61,6 +77,9 @@ contract BathPair {
         uint256 timestamp;
     }
 
+    /// *** Events ***
+
+    /// @notice Log a new market-making trade placed by a strategist, resulting in a StrategitTrade
     event LogStrategistTrade(
         uint256 strategistTradeID,
         bytes32 askId,
@@ -71,6 +90,7 @@ contract BathPair {
         address strategist
     );
 
+    /// @notice Logs the cancellation of a StrategistTrade
     event LogScrubbedStratTrade(
         uint256 strategistIDScrubbed,
         uint256 assetFill,
@@ -81,6 +101,7 @@ contract BathPair {
         address bathQuoteAddress
     );
 
+    /// @notice Log when a strategist claims their market-making rewards (effectively a rebate for good performance)
     event LogStrategistRewardClaim(
         address strategist,
         address asset,
@@ -88,6 +109,9 @@ contract BathPair {
         uint256 timestamp
     );
 
+    /// *** External Functions ***
+
+    /// @notice Constructor-like initialization function
     /// @dev Proxy-safe initialization of storage
     function initialize(uint256 _maxOrderSizeBPS, int128 _shapeCoefNum)
         external
@@ -105,11 +129,16 @@ contract BathPair {
         RubiconMarketAddress = IBathHouse(_bathHouse).getMarket();
 
         // Shape variables for dynamic inventory management
-        maxOrderSizeBPS = _maxOrderSizeBPS;
-        shapeCoefNum = _shapeCoefNum;
+        /// *** DEprecate but keep storage variable on OP
+        deprecatedStorageVarKept4Proxy = _maxOrderSizeBPS;
+
+        /// @dev A deprecated storage variable! Turns out order books are elegant and complex math is simply computed off-chain, and priced in on-chain orders at the speed of Ethereum L2s!
+        deprecatedStorageVarKept420Proxy = _shapeCoefNum;
 
         initialized = true;
     }
+
+    /// *** Modifiers ***
 
     modifier onlyBathHouse() {
         require(msg.sender == bathHouse);
@@ -125,6 +154,10 @@ contract BathPair {
         _;
     }
 
+    // *** Internal Functions ***
+
+    /// @notice This function enforces that the Bath House reserveRatio (a % of underlying pool liquidity) is enforced across all pools
+    /// @dev This function should ensure that reserveRatio % of the underlying liquidity always remains on the Bath Token. Utilization should be 1 - reserveRatio in practice assuming strategists use all available liquidity.
     function enforceReserveRatio(
         address underlyingAsset,
         address underlyingQuote
@@ -144,7 +177,8 @@ contract BathPair {
                 IBathToken(bathAssetAddress).underlyingBalance().mul(
                     IBathHouse(bathHouse).reserveRatio()
                 )
-            ).div(100) <= IERC20(underlyingAsset).balanceOf(bathAssetAddress),
+            )
+            .div(100) <= IERC20(underlyingAsset).balanceOf(bathAssetAddress),
             "Failed to meet asset pool reserve ratio"
         );
         require(
@@ -152,87 +186,33 @@ contract BathPair {
                 IBathToken(bathQuoteAddress).underlyingBalance().mul(
                     IBathHouse(bathHouse).reserveRatio()
                 )
-            ).div(100) <= IERC20(underlyingQuote).balanceOf(bathQuoteAddress),
+            )
+            .div(100) <= IERC20(underlyingQuote).balanceOf(bathQuoteAddress),
             "Failed to meet quote pool reserve ratio"
         );
     }
 
-    function setMaxOrderSizeBPS(uint16 val) external onlyBathHouse {
-        maxOrderSizeBPS = val;
-    }
-
-    function setShapeCoefNum(int128 val) external onlyBathHouse {
-        shapeCoefNum = val;
-    }
-
-    // Note: the goal is to enable a means to retrieve all outstanding orders a strategist has live in the books
-    // This is helpful for them to manage orders as well as place any controls on strategists
-    function getOutstandingStrategistTrades(
-        address asset,
-        address quote,
-        address strategist
-    ) external view returns (uint256[] memory) {
-        return outOffersByStrategist[asset][quote][strategist];
-    }
-
-    // *** Internal Functions ***
-
-    // Returns price denominated in the quote asset
-    function getMidpointPrice(address asset, address quote)
-        public
-        view
-        returns (
-            /* asset, quote*/
-            int128
-        )
-    {
-        address _RubiconMarketAddress = RubiconMarketAddress;
-        uint256 bestAskID = IRubiconMarket(_RubiconMarketAddress).getBestOffer(
-            IERC20(asset),
-            IERC20(quote)
-        );
-        uint256 bestBidID = IRubiconMarket(_RubiconMarketAddress).getBestOffer(
-            IERC20(quote),
-            IERC20(asset)
-        );
-        // Throw a zero if unable to determine midpoint from the book
-        if (bestAskID == 0 || bestBidID == 0) {
-            return 0;
-        }
-        order memory bestAsk = getOfferInfo(bestAskID);
-        order memory bestBid = getOfferInfo(bestBidID);
-        int128 midpoint = ABDKMath64x64.divu(
-            (
-                (bestAsk.buy_amt.div(bestAsk.pay_amt)).add(
-                    bestBid.pay_amt.div(bestBid.buy_amt)
-                )
-            ),
-            2
-        );
-        return midpoint;
-    }
-
-    // orderID of the fill
-    // only log fills for each strategist - needs to be asset specific
-    // isAssetFill are *quotes* that result in asset yield
-    // A strategist's relative share of total fills is their amount of reward claim, that is logged here
+    /// @notice Log whenever a strategist rebalances a fill amount and log the amount while incrementing total fills for that specific asset
+    /// @dev Only log fills for each strategist in an asset specific manner
+    /// @dev Goal is to map a strategist to a fill
     function logFill(
         uint256 amt,
-        // bool isAssetFill,
         address strategist,
         address asset
     ) internal {
-        // Goal is to map a strategist to a fill
         strategist2Fills[strategist][asset] += amt;
         totalFillsPerAsset[asset] += amt;
     }
 
+    /// @notice Internal function to provide the next unique StrategistTrade ID
     function _next_id() internal returns (uint256) {
         last_stratTrade_id++;
         return last_stratTrade_id;
     }
 
-    // Note: this function results in the removal of the order from the books and it being deleted from the contract
+    /// @notice This function results in the removal of the Strategist Trade (bid and/or ask on Rubicon Market) from the books and it being deleted from the contract
+    /// @dev The local array of strategist IDs that exists for any given strategist [query via getOutstandingStrategistTrades()] acts as an acitve RAM for outstanding strategist trades
+    /// @dev Cancels outstanding orders and manages the ledger of outstandingAmount() on bathTokens as Strategist Trades are cancelled/scrubbed or expired
     function handleStratOrderAtID(uint256 id) internal {
         StrategistTrade memory info = strategistTrades[id];
         address _asset = info.askAsset;
@@ -311,7 +291,7 @@ contract BathPair {
         );
     }
 
-    // Get offer info from Rubicon Market
+    /// @notice Get information about a Rubicon Market offer and return it as an order
     function getOfferInfo(uint256 id) internal view returns (order memory) {
         (
             uint256 ask_amt,
@@ -323,28 +303,34 @@ contract BathPair {
         return offerInfo;
     }
 
+    /// @notice A function that returns the index of uid from array
+    /// @dev uid must be in array for the purposes of this contract to enforce outstanding trades per strategist are tracked correctly
     function getIndexFromElement(uint256 uid, uint256[] storage array)
         internal
         view
         returns (uint256 _index)
     {
+        bool assigned = false;
         for (uint256 index = 0; index < array.length; index++) {
             if (uid == array[index]) {
                 _index = index;
+                assigned = true;
                 return _index;
             }
         }
+        require(assigned, "Didnt Find that element in live list, cannot scrub");
     }
 
-    // *** External functions that can be called by Strategists ***
+    // *** External Functions - Only Approved Strategists ***
 
+    /// @notice Key entry point for strategists to use Bath Token (LP) funds to place market-making trades on the Rubicon Order Book
     function placeMarketMakingTrades(
         address[2] memory tokenPair, // ASSET, Then Quote
         uint256 askNumerator, // Quote / Asset
         uint256 askDenominator, // Asset / Quote
         uint256 bidNumerator, // size in ASSET
         uint256 bidDenominator // size in QUOTES
-    ) external onlyApprovedStrategist(msg.sender) returns (uint256 id) {
+    ) public onlyApprovedStrategist(msg.sender) returns (uint256 id) {
         // Require at least one order is non-zero
         require(
             (askNumerator > 0 && askDenominator > 0) ||
@@ -425,6 +411,56 @@ contract BathPair {
         );
     }
 
+    /// @notice A function to batch together many placeMarketMakingTrades() in a single transaction
+    function batchMarketMakingTrades(
+        address[2] memory tokenPair, // ASSET, Then Quote
+        uint256[] memory askNumerators, // Quote / Asset
+        uint256[] memory askDenominators, // Asset / Quote
+        uint256[] memory bidNumerators, // size in ASSET
+        uint256[] memory bidDenominators // size in QUOTES
+    ) external onlyApprovedStrategist(msg.sender) {
+        require(
+            askNumerators.length == askDenominators.length &&
+                askDenominators.length == bidNumerators.length &&
+                bidNumerators.length == bidDenominators.length,
+            "not all order lengths match"
+        );
+        uint256 quantity = askNumerators.length;
+
+        for (uint256 index = 0; index < quantity; index++) {
+            placeMarketMakingTrades(
+                tokenPair,
+                askNumerators[index],
+                askDenominators[index],
+                bidNumerators[index],
+                bidDenominators[index]
+            );
+        }
+    }
+
+    /// @notice A function to requote an outstanding order and replace it with a new Strategist Trade
+    /// @dev Note that this function will create a new unique id for the requote'd ID due to the low-level functionality
+    function requote(
+        uint256 id,
+        address[2] memory tokenPair, // ASSET, Then Quote
+        uint256 askNumerator, // Quote / Asset
+        uint256 askDenominator, // Asset / Quote
+        uint256 bidNumerator, // size in ASSET
+        uint256 bidDenominator // size in QUOTES
+    ) external onlyApprovedStrategist(msg.sender) {
+        // 1. Scrub strat trade
+        scrubStrategistTrade(id);
+
+        // 2. Place another
+        placeMarketMakingTrades(
+            tokenPair,
+            askNumerator,
+            askDenominator,
+            bidNumerator,
+            bidDenominator
+        );
+    }
+
     /// @notice - function to rebalance fill between two pools
     function rebalancePair(
         uint256 assetRebalAmt, //amount of ASSET in the quote buffer
@@ -444,7 +480,7 @@ contract BathPair {
             "tokenToBathToken error"
         );
 
-        // TODO: improve this?
+        // This should be localized to the bathToken in future versions
         uint16 stratReward = IBathHouse(_bathHouse).getBPSToStrats();
 
         // Simply rebalance given amounts
@@ -466,8 +502,8 @@ contract BathPair {
         }
     }
 
-    //Function to attempt AMM inventory risk tail off
-    // This function calls the strategist utility which handles the trade and returns funds to LPs
+    /// @notice Function to attempt inventory risk tail off on an AMM
+    /// @dev This function calls the strategist utility which handles the trade and returns funds to LPs
     function tailOff(
         address targetPool,
         address tokenToHandle,
@@ -498,8 +534,7 @@ contract BathPair {
         );
     }
 
-    // Inputs are indices through which to scrub
-    // Zero indexed indices!
+    /// @notice Cancel an outstanding strategist offers and return funds to LPs while logging fills
     function scrubStrategistTrade(uint256 id)
         public
         onlyApprovedStrategist(msg.sender)
@@ -511,67 +546,31 @@ contract BathPair {
         handleStratOrderAtID(id);
     }
 
-    // ** EXPERIMENTAL **
-    function scrubStrategistTrades(uint256[] memory ids) external {
+    /// @notice Batch scrub outstanding strategist trades and return funds to LPs
+    function scrubStrategistTrades(uint256[] memory ids)
+        external
+        onlyApprovedStrategist(msg.sender)
+    {
         for (uint256 index = 0; index < ids.length; index++) {
             uint256 _id = ids[index];
             scrubStrategistTrade(_id);
         }
     }
 
-    // Return the largest order size that can be placed as a strategist for given pair and their liquidity pools
-    // ^ I believe this is the best approach given that this function call relies on knowledge of sister liquidity pool
-    // High level idea: here is the asset and pair I'm market-making for, what max size can I use?
-    function getMaxOrderSize(
-        address asset,
-        address sisterAsset,
-        address targetBathToken,
-        address sisterBathToken
-    ) public view returns (uint256 maxSizeAllowed) {
-        require(asset != sisterAsset, "provided identical asset vales GMOS");
-        int128 shapeCoef = ABDKMath64x64.div(shapeCoefNum, 1000);
-        // Get LP balance for target asset
-        uint256 underlyingBalance = IERC20(asset).balanceOf(targetBathToken);
-        require(
-            underlyingBalance > 0,
-            "no bathToken liquidity to calculate max orderSize permissable"
-        );
-
-        // If no midpoint in book, allow **permissioned** strategist to maxOrderSize
-        int128 midpoint = getMidpointPrice(asset, sisterAsset); //amount in sisterAsset also can be thought of as sisterAsset per asset price in the book
-        if (midpoint == 0) {
-            return maxOrderSizeBPS.mul(underlyingBalance).div(10000);
-        }
-        int128 ratio = ABDKMath64x64.divu(
-            underlyingBalance,
-            IERC20(sisterAsset).balanceOf(sisterBathToken)
-        ); // Liquidity check of: assset / sisterAsset
-        if (ABDKMath64x64.mul(ratio, midpoint) > (2**64)) {
-            // Overweight asset liquidity relative to midpoint price
-            return maxOrderSizeBPS.mul(underlyingBalance).div(10000);
-        } else {
-            // return dynamic order size
-            uint256 maxSize = maxOrderSizeBPS.mul(underlyingBalance).div(10000);
-            int128 shapeFactor = ABDKMath64x64.exp(
-                ABDKMath64x64.mul(
-                    shapeCoef,
-                    ABDKMath64x64.inv(ABDKMath64x64.div(ratio, midpoint))
-                )
-            );
-            uint256 dynamicSize = ABDKMath64x64.mulu(shapeFactor, maxSize);
-            return dynamicSize;
-        }
-    }
-
-    // function where strategists claim rewards proportional to their quantity of fills
-    // Provide the pair on which you want to claim rewards
-    function strategistBootyClaim(address asset, address quote) external {
+    /// @notice Function where strategists claim rewards proportional to their quantity of fills
+    /// @dev This function should allow a strategist to claim ERC20s sitting on this contract (earned via rebalancing) relative to their share or strategist activity on the pair
+    /// @dev Provide the pair on which you want to claim rewards
+    function strategistBootyClaim(address asset, address quote)
+        external
+        onlyApprovedStrategist(msg.sender)
+    {
         uint256 fillCountA = strategist2Fills[msg.sender][asset];
         uint256 fillCountQ = strategist2Fills[msg.sender][quote];
         if (fillCountA > 0) {
             uint256 booty = (
                 fillCountA.mul(IERC20(asset).balanceOf(address(this)))
-            ).div(totalFillsPerAsset[asset]);
+            )
+            .div(totalFillsPerAsset[asset]);
             IERC20(asset).transfer(msg.sender, booty);
             emit LogStrategistRewardClaim(
                 msg.sender,
@@ -585,7 +584,8 @@ contract BathPair {
         if (fillCountQ > 0) {
             uint256 booty = (
                 fillCountQ.mul(IERC20(quote).balanceOf(address(this)))
-            ).div(totalFillsPerAsset[quote]);
+            )
+            .div(totalFillsPerAsset[quote]);
             IERC20(quote).transfer(msg.sender, booty);
             emit LogStrategistRewardClaim(
                 msg.sender,
@@ -597,7 +597,16 @@ contract BathPair {
             strategist2Fills[msg.sender][quote] -= fillCountQ;
         }
     }
-}
 
-// Wish list:
-// - Nicer way to scrub orders in bulk
+    /// *** View Functions ***
+
+    /// @notice The goal of this function is to enable a means to retrieve all outstanding orders a strategist has live in the books
+    /// @dev This is helpful to manage orders as well as track all strategist orders (like their RAM of StratTrade IDs) and place any would-be constraints on strategists
+    function getOutstandingStrategistTrades(
+        address asset,
+        address quote,
+        address strategist
+    ) public view returns (uint256[] memory) {
+        return outOffersByStrategist[asset][quote][strategist];
+    }
+}

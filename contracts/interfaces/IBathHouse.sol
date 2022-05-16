@@ -7,10 +7,11 @@ interface IBathHouse {
 
     function initialized() external returns (bool);
 
-    function reserveRatio() external view returns (uint);
+    function reserveRatio() external view returns (uint256);
 
     function tokenToBathToken(address erc20Address)
-        external view
+        external
+        view
         returns (address bathTokenAddress);
 
     function isApprovedStrategist(address wouldBeStrategist)
