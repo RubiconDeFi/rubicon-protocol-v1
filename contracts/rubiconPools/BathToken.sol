@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 
+/// @title Single-Asset Tokenized Liquidity
 /// @author Rubicon DeFi Inc. - bghughes.eth
 /// @notice This contract represents a single-asset liquidity pool for Rubicon Pools
 /// @notice Any user can deposit assets into this pool and earn yield from successful strategist market making with their liquidity
-/// @notice This contract looks to both BathPairs and the BathHouse as its admin
+/// @notice This contract looks to both BathPair and the BathHouse as its admin
 
 pragma solidity =0.7.6;
 

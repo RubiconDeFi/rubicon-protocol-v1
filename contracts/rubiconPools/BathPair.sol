@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 
+/// @title Strategist's Entrypoint to Rubicon Pools
 /// @author Rubicon DeFi Inc. - bghughes.eth
 /// @notice This contract allows a strategist to use user funds in order to market make for a Rubicon pair
 /// @notice The BathPair is the admin for the pair's liquidity and has many security checks in place
