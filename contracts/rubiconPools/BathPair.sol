@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-/// @title Strategist's Entrypoint to Rubicon Pools
 /// @author Rubicon DeFi Inc. - bghughes.eth
 /// @notice This contract allows a strategist to use user funds in order to market make for a Rubicon pair
 /// @notice The BathPair is the admin for the pair's liquidity and has many security checks in place
@@ -177,8 +176,7 @@ contract BathPair {
                 IBathToken(bathAssetAddress).underlyingBalance().mul(
                     IBathHouse(bathHouse).reserveRatio()
                 )
-            )
-            .div(100) <= IERC20(underlyingAsset).balanceOf(bathAssetAddress),
+            ).div(100) <= IERC20(underlyingAsset).balanceOf(bathAssetAddress),
             "Failed to meet asset pool reserve ratio"
         );
         require(
@@ -186,8 +184,7 @@ contract BathPair {
                 IBathToken(bathQuoteAddress).underlyingBalance().mul(
                     IBathHouse(bathHouse).reserveRatio()
                 )
-            )
-            .div(100) <= IERC20(underlyingQuote).balanceOf(bathQuoteAddress),
+            ).div(100) <= IERC20(underlyingQuote).balanceOf(bathQuoteAddress),
             "Failed to meet quote pool reserve ratio"
         );
     }
@@ -447,7 +444,7 @@ contract BathPair {
         uint256 askDenominator, // Asset / Quote
         uint256 bidNumerator, // size in ASSET
         uint256 bidDenominator // size in QUOTES
-    ) external onlyApprovedStrategist(msg.sender) {
+    ) public onlyApprovedStrategist(msg.sender) {
         // 1. Scrub strat trade
         scrubStrategistTrade(id);
 
@@ -459,6 +456,37 @@ contract BathPair {
             bidNumerator,
             bidDenominator
         );
+    }
+
+    /// @notice A function to batch together many requote() calls in a single transaction
+    /// @dev Ids and input are indexed through to execute requotes
+    function batchRequoteOffers(
+        uint256[] memory ids,
+        address[2] memory tokenPair, // ASSET, Then Quote
+        uint256[] memory askNumerators, // Quote / Asset
+        uint256[] memory askDenominators, // Asset / Quote
+        uint256[] memory bidNumerators, // size in ASSET
+        uint256[] memory bidDenominators // size in QUOTES
+    ) external onlyApprovedStrategist(msg.sender) {
+        require(
+            askNumerators.length == askDenominators.length &&
+                askDenominators.length == bidNumerators.length &&
+                bidNumerators.length == bidDenominators.length &&
+                ids.length == askNumerators.length,
+            "not all input lengths match"
+        );
+        uint256 quantity = askNumerators.length;
+
+        for (uint256 index = 0; index < quantity; index++) {
+            requote(
+                ids[index],
+                tokenPair,
+                askNumerators[index],
+                askDenominators[index],
+                bidNumerators[index],
+                bidDenominators[index]
+            );
+        }
     }
 
     /// @notice - function to rebalance fill between two pools
@@ -569,8 +597,7 @@ contract BathPair {
         if (fillCountA > 0) {
             uint256 booty = (
                 fillCountA.mul(IERC20(asset).balanceOf(address(this)))
-            )
-            .div(totalFillsPerAsset[asset]);
+            ).div(totalFillsPerAsset[asset]);
             IERC20(asset).transfer(msg.sender, booty);
             emit LogStrategistRewardClaim(
                 msg.sender,
@@ -584,8 +611,7 @@ contract BathPair {
         if (fillCountQ > 0) {
             uint256 booty = (
                 fillCountQ.mul(IERC20(quote).balanceOf(address(this)))
-            )
-            .div(totalFillsPerAsset[quote]);
+            ).div(totalFillsPerAsset[quote]);
             IERC20(quote).transfer(msg.sender, booty);
             emit LogStrategistRewardClaim(
                 msg.sender,

@@ -254,6 +254,12 @@ contract BathHouse {
         admin = newAdmin;
     }
 
+    /// @notice Admin-only function to set a new Bath Token implementation
+    /// @dev Please note that all bathTokens created will use this abi
+    function setNewBathTokenImplementation(address newImplementation) external onlyAdmin {
+        newBathTokenImplementation = newImplementation;
+    }
+
     /// @notice Admin-only function to approve a new permissioned strategist
     function approveStrategist(address strategist) public onlyAdmin {
         approvedStrategists[strategist] = true;

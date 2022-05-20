@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-/// @title Single-Asset Tokenized Liquidity
 /// @author Rubicon DeFi Inc. - bghughes.eth
 /// @notice This contract represents a single-asset liquidity pool for Rubicon Pools
 /// @notice Any user can deposit assets into this pool and earn yield from successful strategist market making with their liquidity
-/// @notice This contract looks to both BathPair and the BathHouse as its admin
+/// @notice This contract looks to both BathPairs and the BathHouse as its admin
 
 pragma solidity =0.7.6;
 
@@ -12,7 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "../interfaces/IBathHouse.sol";
 import "../interfaces/IRubiconMarket.sol";
-import "../interfaces/IVestingWallet.sol";
+import "../interfaces/IBathBuddy.sol";
 
 contract BathToken {
     using SafeMath for uint256;
@@ -78,7 +77,7 @@ contract BathToken {
     address[] public bonusTokens;
 
     /// @notice Address of the OZ Vesting Wallet which acts as means to vest bonusToken incentives to pool HODLers
-    IVestingWallet public rewardsVestingWallet;
+    IBathBuddy public rewardsVestingWallet;
 
     /// *** Events ***
 
@@ -174,16 +173,6 @@ contract BathToken {
         address indexed owner,
         uint256 assets,
         uint256 shares
-    );
-
-    /// @notice Log bonus token reward event
-    event LogClaimBonusTokn(
-        address indexed caller,
-        address indexed receiver,
-        address indexed owner,
-        uint256 assets,
-        uint256 shares,
-        IERC20 bonusToken
     );
 
     /// *** Constructor ***
@@ -409,8 +398,7 @@ contract BathToken {
         // Note: Inflationary tokens may affect this logic
         (totalSupply == 0) ? shares = assets : shares = (
             assets.mul(totalSupply)
-        )
-        .div(totalAssets());
+        ).div(totalAssets());
     }
 
     // Note: MUST NOT be inclusive of any fees that are charged against assets in the Vault.
@@ -468,8 +456,7 @@ contract BathToken {
     function previewMint(uint256 shares) public view returns (uint256 assets) {
         (totalSupply == 0) ? assets = shares : assets = (
             shares.mul(totalAssets())
-        )
-        .div(totalSupply);
+        ).div(totalSupply);
     }
 
     // Mints exactly shares Vault shares to receiver by depositing amount of underlying tokens.
@@ -581,8 +568,7 @@ contract BathToken {
 
         (totalSupply == 0) ? shares = assets : shares = (
             assets.mul(totalSupply)
-        )
-        .div(_pool);
+        ).div(_pool);
 
         // Send shares to designated target
         _mint(receiver, shares);
@@ -639,52 +625,27 @@ contract BathToken {
     }
 
     /// @notice Function to distibute non-underlyingToken Bath Token incentives to pool withdrawers
-    /// @dev Note that bonusTokens adhere to the same feeTo and feeBPS pattern
-    /// @dev Note the edge case in which the bonus token is the underlyingToken, here we simply release() to the pool and skip
+    /// @dev Note that bonusTokens adhere to the same feeTo and feeBPS pattern. Fees sit on BathBuddy to act as effectively accrued to the pool.
     function distributeBonusTokenRewards(
         address receiver,
         uint256 sharesWithdrawn,
         uint256 initialTotalSupply
     ) internal {
-        // Verbose check:
-        // require(initialTotalSupply == sharesWithdrawn + totalSupply);
         if (bonusTokens.length > 0) {
             for (uint256 index = 0; index < bonusTokens.length; index++) {
                 IERC20 token = IERC20(bonusTokens[index]);
+                // Note: Shares already burned in Bath Token _withdraw
 
-                // Pair each bonus token with an OZ Vesting wallet. Each time a user withdraws, they can release() the
-                //  vested amount to this pool. Note, this pool must be the beneficiary of the VestingWallet.
-                if (rewardsVestingWallet != IVestingWallet(0)) {
-                    rewardsVestingWallet.release(address(token));
-                }
-
-                // avoid underlyingToken == token double spend
-                if (address(token) == address(underlyingToken)) {
-                    continue; // Skip because logic below fails on underlying token and release() already called so bonus tokens are already accrued and withdrawn
-                }
-
-                uint256 bonusTokenBalance = token.balanceOf(address(this));
-                if (bonusTokenBalance > 0) {
-                    uint256 amount = bonusTokenBalance.mul(sharesWithdrawn).div(
-                        initialTotalSupply
-                    );
-                    // Note: Shares already burned in _withdraw
-
-                    uint256 _fee = amount.mul(feeBPS).div(10000);
-                    // If FeeTo == address(0) then the fee is effectively accrued by the pool
-                    if (feeTo != address(0)) {
-                        token.transfer(feeTo, _fee);
-                    }
-                    uint256 amountWithdrawn = amount.sub(_fee);
-                    token.transfer(receiver, amountWithdrawn);
-
-                    emit LogClaimBonusTokn(
-                        msg.sender,
+                // Pair each bonus token with a lightly adapted OZ Vesting wallet. Each time a user withdraws, they
+                //  are released their relative share of this pool, of vested BathBuddy rewards
+                // The BathBuddy pool should accrue ERC-20 rewards just like OZ VestingWallet and simply just release the withdrawer's relative share of releaseable() tokens
+                if (rewardsVestingWallet != IBathBuddy(0)) {
+                    rewardsVestingWallet.release(
+                        (token),
                         receiver,
-                        msg.sender,
-                        amountWithdrawn,
                         sharesWithdrawn,
-                        token
+                        initialTotalSupply,
+                        feeBPS
                     );
                 }
             }
