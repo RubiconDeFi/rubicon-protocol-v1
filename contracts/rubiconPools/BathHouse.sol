@@ -10,7 +10,6 @@ import "./BathToken.sol";
 import "../interfaces/IBathPair.sol";
 import "../interfaces/IBathToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/proxy/TransparentUpgradeableProxy.sol";
 
 contract BathHouse {
