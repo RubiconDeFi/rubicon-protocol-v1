@@ -26,19 +26,4 @@ contract("Rubicon Market", (accounts) => {
       WETHInstance = await WETH.deployed();
     });
   });
-  describe("Unit Tests", async function () {
-    it("", async () => {});
-  });
-  describe("Case-Specific Tests", async function () {
-    // STEALTH
-    it("Hypothetical RBCN can be dropped on a trade ", async () => {});
-    it("Fees are correctly accrued to the fee recipient", async () => {});
-    it("** Do some work to understand matching behavior better **", async () => {});
-  });
-  describe("Event Logging Tests", async function () {
-    it("LogTake", async () => {});
-    it("LogMake", async () => {});
-    it("LogKill", async () => {});
-    it("... add in key events ...", async () => {});
-  });
 });

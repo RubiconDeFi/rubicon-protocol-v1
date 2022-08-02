@@ -106,32 +106,8 @@ contract("Bath House", (accounts) => {
         0
       );
     });
-    it("external onlyAdmin createBathToken - correctly spawns a new bathToken", async () => {});
-    it("external onlyAdmin initBathPair - correctly initializes the sole bathPair contract", async () => {});
-    it("external onlyAdmin setBathHouseAdmin - can change the admin of bathHouse securely", async () => {});
-    it("external onlyAdmin setPermissionedStrategists - XXXX", async () => {});
-    // *** Please note if any variables are unused in the v1 system ***
-    it("external onlyAdmin setReserveRatio - XXXX", async () => {});
-    it("external onlyAdmin setCancelTimeDelay - XXXX", async () => {});
-    it("external onlyAdmin setPropToStrats - XXX", async () => {});
-    it("external onlyAdmin setMaxOutstandingPairCount - XXX", async () => {});
-    it("external onlyAdmin setBathTokenMarket - XXX", async () => {});
-    it("external onlyAdmin setBathTokenFeeBPS - XXX", async () => {});
-
-    it("external onlyAdmin setFeeTo - XXX", async () => {});
-    it("external onlyAdmin setBathPairMOSBPS - XXX", async () => {});
-    it("external onlyAdmin setBathPairSCN - XXX", async () => {});
-    it("external onlyAdmin setMarket - XXX", async () => {});
-    //IS this needed??? Check to make sure no getters for public variables
-    it("external view getMarket - XXX", async () => {});
-    // check major variables only need getter if non public...
-    it("external view getBathTokenfromAsset - XXX", async () => {});
-    it("external view isApprovedStrategist - XXX", async () => {});
-    it("external view isApprovedPair - XXX", async () => {});
-    it("external onlyAdmin approveStrategist - XXXX", async () => {});
   });
   describe("Case-Specific Tests", async function () {
-    it("public mapping approvedStrategists - can easily approve strategists", async () => {});
     it("BathTokens can be created permissionlessly - openBathTokenSpawnAndSignal", async () => {
       // Will create a pool permissionlessly
       let signaler = accounts[1];
@@ -207,17 +183,5 @@ contract("Bath House", (accounts) => {
         initialLiquidityNew.sub(MINLIQUIDITYSHARES).toString()
       );
     });
-    it("BathTokens are correctly admin'd to _____ after createBathToken", async () => {});
-    it("BathPairs are correctly admin'd to _____ after initialization via initBathPair", async () => {});
-    it("public mapping tokenToBathToken - seamlessly maps an ERC-20 in the system to its bathToken", async () => {});
-    it("** Key variables cannot be accessed by bad actors **", async () => {});
-  });
-  describe("Event Logging Tests", async function () {
-    // Coordinate with Subgraph on this
-    it("createBathToken is returning all needed and relevant data in an event", async () => {});
-    it("initBathPair is returning all needed and relevant data in an event", async () => {});
-
-    // Want to make sure that actually used/important storage variables emit a log in their change function
-    // it("setAdmin emits a note on the new admin", async () => {}); // Is this needed...?
   });
 });

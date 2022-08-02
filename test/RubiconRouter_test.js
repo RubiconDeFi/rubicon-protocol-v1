@@ -95,7 +95,6 @@ contract("Rubicon Router", (accounts) => {
         { from: accounts[0] }
       );
 
-      // TODO: add check though above is working
       // assert.equal(await WETHInstance.balanceOf(accounts[0]))
     });
     it("BathPair contract is wired up", async () => {
@@ -163,20 +162,6 @@ contract("Rubicon Router", (accounts) => {
           DAIInstance.address
         )
       ).toNumber();
-      // logIndented("Best Ask:", bestAskID);
-      // logIndented(
-      //   "Next Best Ask:",
-      //   (await rubiconMarketInstance.getWorseOffer(bestAskID)).toNumber()
-      // );
-      // logIndented(
-      //   "Is first ask sorted?:",
-      //   await rubiconMarketInstance.isOfferSorted(bestAskID)
-      // );
-      // logIndented(
-      //   "Is second ask sorted?:",
-      //   await rubiconMarketInstance.isOfferSorted(3)
-      // );
-
       let bestBidID = (
         await rubiconMarketInstance.getBestOffer(
           DAIInstance.address,
@@ -196,16 +181,6 @@ contract("Rubicon Router", (accounts) => {
       assert.equal(bids[1][2].toNumber(), 4);
       assert.equal(bids[2][2].toNumber(), 6);
     });
-    it("function getBestOfferAndInfo(address asset, address quote) public view returns ( uint256, //id uint256, ERC20, uint256, ERC20)", async () => {});
-    it("function approveAssetOnMarket(address toApprove) public {", async () => {}); //right security in place?
-    it("function getExpectedSwapFill()", async () => {});
-    it("function swap() public returns (uint) **", async () => {});
-    it("function _swap( uint256 pay_amt, uint256 buy_amt_min, address[] calldata route,  uint256 expectedMarketFeeBPS, address to) internal returns (uint256) {", async () => {});
-
-    // Are these foolish to have in? Is this a dust solution that makes sense?
-    it("function swapEntireBalance( uint256 buy_amt_min, address[] calldata route, // First address is what is being payed, Last address is what is being bought uint256 expectedMarketFeeBPS) external returns (uint256) {", async () => {});
-    it("function maxBuyAllAmount( ERC20 buy_gem, ERC20 pay_gem, uint256 max_fill_amount) external returns (uint256 fill) {", async () => {});
-    it("function maxSellAllAmount( ERC20 pay_gem, ERC20 buy_gem, uint256 min_fill_amount) external returns (uint256 fill) {", async () => {});
   });
   describe("Case-Specific Tests", async function () {
     it("Random: ERC-20 Token with faucet behaves as expected", async () => {
@@ -327,7 +302,10 @@ contract("Rubicon Router", (accounts) => {
       let ethBalanceAfter = await web3.eth.getBalance(accounts[5]);
       let delta = ethBalanceAfter - ethBalanceBefore;
       // Assuming it is lower due to gas ?
-      assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.085")) * (10000 - 20 ) / 10000);
+      assert.isAtLeast(
+        delta,
+        (parseInt(await web3.utils.toWei("0.085")) * (10000 - 20)) / 10000
+      );
     });
     it("[Native ETH] - A user can offer with native ETH", async () => {
       let ethBalanceBefore = await web3.eth.getBalance(accounts[6]);
@@ -343,30 +321,6 @@ contract("Rubicon Router", (accounts) => {
       let delta = ethBalanceBefore - ethBalanceAfter;
       assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.1")));
     });
-    // V1.3 TODO
-    // it("[Native ETH] - A user can offer for native ETH", async () => {
-    //   let ethBalanceBefore = await web3.eth.getBalance(accounts[0]);
-
-    //   await DAIInstance.approve(
-    //     rubiconRouterInstance.address,
-    //     web3.utils.toWei("100"),
-    //     {
-    //       from: accounts[0],
-    //     }
-    //   );
-
-    //   // Offer and expect to fill in native ETH
-    //   await rubiconRouterInstance.offerForETH(
-    //     web3.utils.toWei("1"),
-    //     DAIInstance.address,
-    //     web3.utils.toWei("0.001"),
-    //     0,
-    //     { from: accounts[0] }
-    //   );
-    //   let ethBalanceAfter = await web3.eth.getBalance(accounts[0]);
-    //   let delta = ethBalanceAfter - ethBalanceBefore;
-    //   assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.00099")));
-    // });
     it("[Native ETH] - A user can buyAllAmount with native ETH", async () => {
       // let ethBalanceBefore = await web3.eth.getBalance(accounts[1]);
       const max_fill_amount = web3.utils.toWei("0.1");
@@ -399,41 +353,5 @@ contract("Rubicon Router", (accounts) => {
       );
       // assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.1")));
     });
-    // V1.3 TODO:
-    // it("[Native ETH] - A user can buyAllAmount for native ETH", async () => {
-    //   let ethBalanceBefore = await web3.eth.getBalance(accounts[0]);
-
-    //   await DAIInstance.approve(
-    //     rubiconRouterInstance.address,
-    //     web3.utils.toWei("9"), //approve for enough to cover fee
-    //     {
-    //       from: accounts[0],
-    //     }
-    //   );
-    //   //Inputting fee reduced amount vs
-    //   await rubiconRouterInstance.buyAllAmountForETH(
-    //     await web3.utils.toWei("0.0892"),
-    //     DAIInstance.address,
-    //     web3.utils.toWei("8.982"), // 99.8% to account for fee
-    //     { from: accounts[0] }
-    //   );
-    //   let ethBalanceAfter = await web3.eth.getBalance(accounts[0]);
-    //   let delta = ethBalanceAfter - ethBalanceBefore;
-    //   assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.0891999")));
-    // });
-    // V1.3 TODO:
-    // it("[Native ETH] - A user can cancel for native ETH", async () => {
-    //   //admin cancels id 7 and expects native eth
-    //   let ethBalanceBefore = await web3.eth.getBalance(accounts[6]);
-    //   //Inputting fee reduced amount vs
-    //   await rubiconRouterInstance.cancelForETH(7, { from: accounts[6] });
-    //   let ethBalanceAfter = await web3.eth.getBalance(accounts[6]);
-    //   let delta = ethBalanceAfter - ethBalanceBefore;
-    //   assert.isAtLeast(delta, parseInt(await web3.utils.toWei("0.099999")));
-    // });
-  });
-  describe("Event Logging Tests", async function () {
-    it("We are logging swaps so can track % of trades that are swaps", async () => {});
-    // ANy more?
   });
 });

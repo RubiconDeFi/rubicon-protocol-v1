@@ -94,15 +94,6 @@ contract("Bath Pair", (accounts) => {
     });
   });
   describe("Unit Tests", async function () {
-    it("public address bathHouse - set correctly", async () => {});
-    it("public address RubiconMarketAddress - set correctly", async () => {});
-    it("public bool initialized - correctly initialized", async () => {});
-    // TODO: Need a getter?
-    it("internal int128 shapeCoefNum - correctly initialized", async () => {});
-    //TODO: check this homie out
-    it("public uint maxOrderSizeBPS - correctly initialized", async () => {});
-    // TODO: should this be internal?
-
     // ** Here we want to walk through each step of the full market-making flow while checking how key variables change **
 
     // 1. Place market making trades
@@ -138,43 +129,5 @@ contract("Bath Pair", (accounts) => {
       );
     });
     // 1a-1n make a test for each check along the way
-
-    // 2. Simulate some fill on the pair of orders
-    // 2a-2n ''
-    it("function logFill( uint256 amt,  address strategist, address asset) internal { - XXX", async () => {});
-
-    // 3. Scrub all orders (filled and otherwise) and verify that bathTokens and key variables are updated accordingly
-
-    // 4. Rebalance the pools
-    it("function rebalancePair( uint256 assetRebalAmt,  uint256 quoteRebalAmt,  address _underlyingAsset, address _underlyingQuote) external onlyApprovedStrategist(msg.sender) {- XXX", async () => {});
-
-    // Check the following during the above:
-    it("public uint last_stratTrade_id - increments up correctly with a new order", async () => {});
-    it("public mapping (address=>uint) totalFillsPerAsset - correctly logs an asset-specific fill for a strategist", async () => {});
-    it("public mapping (uint=>StrategistTrade) strategistTrades - correctly adds in all *needed* info with a new strategist trade", async () => {});
-    it("public mapping (address=>uint[]) outOffersByStrategist - correctly logs the outstanding array of orders a strategist has and removes scrubbed orders", async () => {});
-    it("public mapping (address=>(address=>uint)) strategist2Fills - correctly adds in all *needed* info with a new strategist trade", async () => {});
-
-    // Functions to test for proper functionality GRAB BAG:
-    it("function getOutstandingTrades(address strategist) external view returns (uint256[] memory) - XXX", async () => {});
-    it("function getMidpointPrice(address underlyingAsset, address underlyingQuote) internal view returns (int128) - XXX", async () => {});
-    it("function handleStratOrderAtID( uint256 id, address bathAssetAddress, address bathQuoteAddress) internal { - XXX", async () => {});
-    it(" ??? attempTail off??? Remove??? - XXX", async () => {});
-    it("function scrubStrategistTrade(uint256 id,address bathAssetAddress,address bathQuoteAddress) public onlyApprovedStrategist(msg.sender) {- XXX", async () => {});
-    it("function scrubStrategistTrades(uint256[] memory ids,address bathAssetAddress,address bathQuoteAddress) external { - XXX", async () => {});
-    it("function getMaxOrderSize( address asset, address sisterAsset, address targetBathToken, address sisterBathToken) public view returns (uint256 maxSizeAllowed) { - XXX", async () => {});
-    it("function strategistBootyClaim(address asset, address quote) external { - XXX", async () => {});
-  });
-  describe("Case-Specific Tests", async function () {
-    it("A strategist can place a bid OR an ask", async () => {});
-    it("getMaxOrderSize scales correctly according to an understood shape curve", async () => {});
-    it("Only approved strategists can submit orders and access user liquidity", async () => {});
-    it("What is the maximum liquidity a strategist can utilize? Via what mechanism?", async () => {});
-    it("The strategist can scrub multiple trades at once - log gas costs", async () => {});
-  });
-  describe("Event Logging Tests", async function () {
-    it("Any new strategist trade emits an event with the data we need", async () => {});
-    it("A rebalance emits data correctly", async () => {});
-    it("A scrubbing of an outstanding order ?needed? emits data correctly", async () => {});
   });
 });
