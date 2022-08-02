@@ -9,6 +9,7 @@ pragma solidity =0.7.6;
 pragma experimental ABIEncoderV2;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "../interfaces/IBathToken.sol";
 import "../interfaces/IBathHouse.sol";
@@ -19,6 +20,7 @@ contract BathPair {
     /// *** Libraries ***
     using SafeMath for uint256;
     using SafeMath for uint16;
+    using SafeERC20 for IERC20;
 
     /// *** Storage Variables ***
 
@@ -55,6 +57,8 @@ contract BathPair {
     /// @notice Tracks the market-kaing fill amounts on a per-asset basis of a strategist
     /// @dev strategist => erc20asset => fill amount per asset;
     mapping(address => mapping(address => uint256)) public strategist2Fills;
+
+    bool locked;
 
     /// *** Structs ***
 
@@ -108,6 +112,48 @@ contract BathPair {
         uint256 timestamp
     );
 
+    /// @notice Log when a strategist places a bathMarketMaking order
+    event LogBatchMarketMakingTrades(address strategist, uint256[] trades);
+
+    /// @notice Log when a strategist requotes an offer
+    event LogRequote(
+        address strategist,
+        uint256 scrubbedOfferID,
+        uint256 newOfferID
+    );
+
+    /// @notice Log when a strategist bath requotes offers
+    event LogBatchRequoteOffers(address strategist, uint256[] scrubbedOfferIDs);
+
+    /// @notice Log when a strategist tails off fill on an external venue
+    event LogTailOffv0(
+        address strategist,
+        address targetPool,
+        address tokenToHandle,
+        address targetToken,
+        uint256 poolFee,
+        uint256 inputAmount
+    );
+
+    /// @notice Log when a strategist tails off fill through a multi-hop route on an external venue
+    event LogTailOffMultiv0(
+        address strategist,
+        address targetPool,
+        address[] assets,
+        uint24[] fees,
+        uint256 inputAmount
+    );
+
+    /// @notice Log when a strategist rebalances a pair
+    event LogRebalancePair(
+        address strategist,
+        address underlyingAsset,
+        address quoteAddress,
+        uint256 assetRebalAmt,
+        uint256 quoteRebalAmt,
+        uint256 strategistReward
+    );
+
     /// *** External Functions ***
 
     /// @notice Constructor-like initialization function
@@ -153,24 +199,24 @@ contract BathPair {
         _;
     }
 
+    /// @dev beGoneReentrantScum
+    modifier beGoneReentrantScum() {
+        require(!locked);
+        locked = true;
+        _;
+        locked = false;
+    }
+
     // *** Internal Functions ***
 
     /// @notice This function enforces that the Bath House reserveRatio (a % of underlying pool liquidity) is enforced across all pools
     /// @dev This function should ensure that reserveRatio % of the underlying liquidity always remains on the Bath Token. Utilization should be 1 - reserveRatio in practice assuming strategists use all available liquidity.
     function enforceReserveRatio(
         address underlyingAsset,
-        address underlyingQuote
-    )
-        internal
-        view
-        returns (address bathAssetAddress, address bathQuoteAddress)
-    {
-        bathAssetAddress = IBathHouse(bathHouse).tokenToBathToken(
-            underlyingAsset
-        );
-        bathQuoteAddress = IBathHouse(bathHouse).tokenToBathToken(
-            underlyingQuote
-        );
+        address underlyingQuote,
+        address bathAssetAddress,
+        address bathQuoteAddress
+    ) internal view {
         require(
             (
                 IBathToken(bathAssetAddress).underlyingBalance().mul(
@@ -223,8 +269,8 @@ contract BathPair {
         );
         order memory offer1 = getOfferInfo(info.askId); //ask
         order memory offer2 = getOfferInfo(info.bidId); //bid
-        uint256 askDelta = info.askPayAmt - offer1.pay_amt;
-        uint256 bidDelta = info.bidPayAmt - offer2.pay_amt;
+        uint256 askDelta = info.askPayAmt.sub(offer1.pay_amt);
+        uint256 bidDelta = info.bidPayAmt.sub(offer2.pay_amt);
 
         // if real
         if (info.askId != 0) {
@@ -337,11 +383,12 @@ contract BathPair {
 
         address _underlyingAsset = tokenPair[0];
         address _underlyingQuote = tokenPair[1];
-
-        (
-            address bathAssetAddress,
-            address bathQuoteAddress
-        ) = enforceReserveRatio(_underlyingAsset, _underlyingQuote);
+        address bathAssetAddress = IBathHouse(bathHouse).tokenToBathToken(
+            _underlyingAsset
+        );
+        address bathQuoteAddress = IBathHouse(bathHouse).tokenToBathToken(
+            _underlyingQuote
+        );
 
         require(
             bathAssetAddress != address(0) && bathQuoteAddress != address(0),
@@ -376,6 +423,13 @@ contract BathPair {
             bid.pay_gem,
             bid.buy_amt,
             bid.buy_gem
+        );
+
+        enforceReserveRatio(
+            _underlyingAsset,
+            _underlyingQuote,
+            bathAssetAddress,
+            bathQuoteAddress
         );
 
         // Strategist trade is recorded so they can get paid and the trade is logged for time
@@ -415,7 +469,7 @@ contract BathPair {
         uint256[] memory askDenominators, // Asset / Quote
         uint256[] memory bidNumerators, // size in ASSET
         uint256[] memory bidDenominators // size in QUOTES
-    ) external onlyApprovedStrategist(msg.sender) {
+    ) public onlyApprovedStrategist(msg.sender) {
         require(
             askNumerators.length == askDenominators.length &&
                 askDenominators.length == bidNumerators.length &&
@@ -424,15 +478,19 @@ contract BathPair {
         );
         uint256 quantity = askNumerators.length;
 
+        uint256[] memory trades = new uint256[](quantity);
+
         for (uint256 index = 0; index < quantity; index++) {
-            placeMarketMakingTrades(
+            uint256 id = placeMarketMakingTrades(
                 tokenPair,
                 askNumerators[index],
                 askDenominators[index],
                 bidNumerators[index],
                 bidDenominators[index]
             );
+            trades[index] = id;
         }
+        emit LogBatchMarketMakingTrades(msg.sender, (trades));
     }
 
     /// @notice A function to requote an outstanding order and replace it with a new Strategist Trade
@@ -449,13 +507,15 @@ contract BathPair {
         scrubStrategistTrade(id);
 
         // 2. Place another
-        placeMarketMakingTrades(
+        uint256 newOfferID = placeMarketMakingTrades(
             tokenPair,
             askNumerator,
             askDenominator,
             bidNumerator,
             bidDenominator
         );
+
+        emit LogRequote(msg.sender, id, (newOfferID));
     }
 
     /// @notice A function to batch together many requote() calls in a single transaction
@@ -475,18 +535,20 @@ contract BathPair {
                 ids.length == askNumerators.length,
             "not all input lengths match"
         );
-        uint256 quantity = askNumerators.length;
 
-        for (uint256 index = 0; index < quantity; index++) {
-            requote(
-                ids[index],
-                tokenPair,
-                askNumerators[index],
-                askDenominators[index],
-                bidNumerators[index],
-                bidDenominators[index]
-            );
-        }
+        // Scrub the orders
+        scrubStrategistTrades(ids);
+
+        // Then Batch market make
+        batchMarketMakingTrades(
+            tokenPair,
+            askNumerators,
+            askDenominators,
+            bidNumerators,
+            bidDenominators
+        );
+
+        emit LogBatchRequoteOffers(msg.sender, ids);
     }
 
     /// @notice - function to rebalance fill between two pools
@@ -496,6 +558,10 @@ contract BathPair {
         address _underlyingAsset,
         address _underlyingQuote
     ) external onlyApprovedStrategist(msg.sender) {
+        require(
+            _underlyingAsset != _underlyingQuote,
+            "_underlyingAsset != _underlyingQuote"
+        );
         address _bathHouse = bathHouse;
         address _bathAssetAddress = IBathHouse(_bathHouse).tokenToBathToken(
             _underlyingAsset
@@ -528,6 +594,15 @@ contract BathPair {
                 quoteRebalAmt
             );
         }
+
+        emit LogRebalancePair(
+            msg.sender,
+            _underlyingAsset,
+            _underlyingQuote,
+            assetRebalAmt,
+            quoteRebalAmt,
+            stratReward
+        );
     }
 
     /// @notice Function to attempt inventory risk tail off on an AMM
@@ -536,9 +611,9 @@ contract BathPair {
         address targetPool,
         address tokenToHandle,
         address targetToken,
-        address _stratUtil, // delegatecall target
-        uint256 amount, //fill amount to handle
-        uint256 hurdle, //must clear this on tail off
+        address _stratUtil,
+        uint amount, //fill amount to handle
+        uint hurdle, //must clear this on tail off
         uint24 _poolFee
     ) external onlyApprovedStrategist(msg.sender) {
         // transfer here
@@ -560,6 +635,45 @@ contract BathPair {
             _poolFee,
             targetPool
         );
+
+        emit LogTailOffv0(msg.sender, targetPool, tokenToHandle, targetToken, _poolFee, amount);
+    }
+
+    /// @notice Function to attempt inventory risk tail off on an AMM
+    /// @dev This function calls the strategist utility which handles the multi hop trade and returns funds to LPs
+    function tailOffMulti(
+        address targetPool,
+        uint256 amount,
+        address[] memory assets,
+        uint24[] memory fees,
+        uint256 hurdle,
+        address _stratUtil
+    ) external onlyApprovedStrategist(msg.sender) {
+        // transfer here
+        uint16 stratRewardBPS = IBathHouse(bathHouse).getBPSToStrats();
+
+        // Send fill to strat util to be handled
+        IBathToken(targetPool).rebalance(
+            _stratUtil,
+            assets[0], // first input in the path
+            stratRewardBPS,
+            amount
+        );
+
+        require(
+            assets[assets.length - 1] == IBathToken(targetPool).asset(),
+            "You are not sending the correct ERC-20 to pool multi tail"
+        );
+        // Should always exceed hurdle given amountOutMinimum
+        IStrategistUtility(_stratUtil).UNIdumpMulti(
+            amount.sub((stratRewardBPS.mul(amount)).div(10000)),
+            assets,
+            fees,
+            hurdle,
+            targetPool
+        );
+
+        emit LogTailOffMultiv0(msg.sender, targetPool, assets, fees, amount);
     }
 
     /// @notice Cancel an outstanding strategist offers and return funds to LPs while logging fills
@@ -576,7 +690,7 @@ contract BathPair {
 
     /// @notice Batch scrub outstanding strategist trades and return funds to LPs
     function scrubStrategistTrades(uint256[] memory ids)
-        external
+        public
         onlyApprovedStrategist(msg.sender)
     {
         for (uint256 index = 0; index < ids.length; index++) {
@@ -591,14 +705,16 @@ contract BathPair {
     function strategistBootyClaim(address asset, address quote)
         external
         onlyApprovedStrategist(msg.sender)
+        beGoneReentrantScum
     {
+        require(asset != quote, "asset != quote");
         uint256 fillCountA = strategist2Fills[msg.sender][asset];
         uint256 fillCountQ = strategist2Fills[msg.sender][quote];
         if (fillCountA > 0) {
             uint256 booty = (
                 fillCountA.mul(IERC20(asset).balanceOf(address(this)))
             ).div(totalFillsPerAsset[asset]);
-            IERC20(asset).transfer(msg.sender, booty);
+            IERC20(asset).safeTransfer(msg.sender, booty);
             emit LogStrategistRewardClaim(
                 msg.sender,
                 asset,
@@ -612,7 +728,7 @@ contract BathPair {
             uint256 booty = (
                 fillCountQ.mul(IERC20(quote).balanceOf(address(this)))
             ).div(totalFillsPerAsset[quote]);
-            IERC20(quote).transfer(msg.sender, booty);
+            IERC20(quote).safeTransfer(msg.sender, booty);
             emit LogStrategistRewardClaim(
                 msg.sender,
                 quote,
@@ -621,6 +737,30 @@ contract BathPair {
             );
             totalFillsPerAsset[quote] -= fillCountQ;
             strategist2Fills[msg.sender][quote] -= fillCountQ;
+        }
+    }
+
+    /// @dev a single use function for storage migration between versions. There was an old bug in which case StratIDs could be scrubbed that have already been scrubbed.
+    /// @dev This results in ~under accounting~ on the Bath Token and makes the Strat IDs un-scrubbable in normal operations, hence this one-time function to allow the strategist to modify outOffersByStrategist
+    function flushDeprecatedStratOrders(
+        address asset,
+        address quote,
+        address strategist,
+        uint256[] memory ids
+    ) external onlyApprovedStrategist(msg.sender) {
+        // Remove these orders from the strategist RAM
+        for (uint256 index = 0; index < ids.length; index++) {
+            uint256 id = ids[index];
+            // Delete the order from outOffersByStrategist
+            uint256 target = getIndexFromElement(
+                id,
+                outOffersByStrategist[asset][quote][strategist]
+            );
+            uint256[] storage current = outOffersByStrategist[asset][quote][
+                strategist
+            ];
+            current[target] = current[current.length - 1];
+            current.pop();
         }
     }
 

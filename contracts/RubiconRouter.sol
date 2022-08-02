@@ -6,21 +6,29 @@ pragma solidity =0.7.6;
 pragma abicoder v2;
 
 import "./RubiconMarket.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
+// import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "./peripheral_contracts/WETH9.sol"; // @unsupported: ovm
 import "./interfaces/IBathToken.sol";
+import "./interfaces/IBathBuddy.sol";
 
 ///@dev this contract is a high-level router that utilizes Rubicon smart contracts to provide
 ///@dev added convenience and functionality when interacting with the Rubicon protocol
 contract RubiconRouter {
     using SafeMath for uint256;
+    using SafeERC20 for IERC20;
 
     address public RubiconMarketAddress;
 
     address payable public wethAddress;
 
     bool public started;
+
+    /// @dev track when users make offers with/for the native asset so we can permission the cancelling of those orders
+    mapping(address => uint256[]) public userNativeAssetOrders;
+
+    bool locked;
 
     event LogNote(string, uint256);
 
@@ -43,6 +51,14 @@ contract RubiconRouter {
         RubiconMarketAddress = _theTrap;
         wethAddress = _weth;
         started = true;
+    }
+
+    /// @dev beGoneReentrantScum
+    modifier beGoneReentrantScum() {
+        require(!locked);
+        locked = true;
+        _;
+        locked = false;
     }
 
     /// @notice Get the outstanding best N orders from both sides of the order book for a given pair
@@ -104,9 +120,9 @@ contract RubiconRouter {
                 continue;
             }
             uint256 nextBestAsk = RubiconMarket(_RubiconMarketAddress)
-            .getWorseOffer(lastAsk);
+                .getWorseOffer(lastAsk);
             uint256 nextBestBid = RubiconMarket(_RubiconMarketAddress)
-            .getWorseOffer(lastBid);
+                .getWorseOffer(lastBid);
             (uint256 ask_pay_amt, , uint256 ask_buy_amt, ) = RubiconMarket(
                 _RubiconMarketAddress
             ).getOffer(nextBestAsk);
@@ -152,9 +168,18 @@ contract RubiconRouter {
     }
 
     // function for infinite approvals of Rubicon Market
-    function approveAssetOnMarket(address toApprove) public {
+    function approveAssetOnMarket(address toApprove)
+        private
+        beGoneReentrantScum
+    {
+        require(
+            started &&
+                RubiconMarketAddress != address(this) &&
+                RubiconMarketAddress != address(0),
+            "Router not initialized"
+        );
         // Approve exchange
-        ERC20(toApprove).approve(RubiconMarketAddress, 2**256 - 1);
+        IERC20(toApprove).safeApprove(RubiconMarketAddress, 2**256 - 1);
     }
 
     /// @dev this function takes the same parameters of swap and returns the expected amount
@@ -195,11 +220,11 @@ contract RubiconRouter {
         uint256 pay_amt,
         uint256 buy_amt_min,
         address[] calldata route, // First address is what is being payed, Last address is what is being bought
-        uint256 expectedMarketFeeBPS //20
+        uint256 expectedMarketFeeBPS //20 /**beGoneReentrantScum*/
     ) public returns (uint256) {
         //**User must approve this contract first**
         //transfer needed amount here first
-        ERC20(route[0]).transferFrom(
+        IERC20(route[0]).safeTransferFrom(
             msg.sender,
             address(this),
             pay_amt.add(pay_amt.mul(expectedMarketFeeBPS).div(10000)) // Account for expected fee
@@ -222,15 +247,22 @@ contract RubiconRouter {
         uint256 expectedMarketFeeBPS,
         address to // Recipient of swap outputs!
     ) internal returns (uint256) {
+        require(
+            expectedMarketFeeBPS < 1000,
+            "Your fee is too high! Check correct value on-chain"
+        );
+
+        require(route.length > 1, "Not enough hop destinations!");
+
         address _market = RubiconMarketAddress;
         uint256 currentAmount = 0;
         for (uint256 i = 0; i < route.length - 1; i++) {
             (address input, address output) = (route[i], route[i + 1]);
             uint256 _pay = i == 0
                 ? pay_amt
-                : (
-                    currentAmount.sub(
-                        currentAmount.mul(expectedMarketFeeBPS).div(10000)
+                : currentAmount.sub(
+                    currentAmount.mul(expectedMarketFeeBPS).div(
+                        10000 + expectedMarketFeeBPS
                     )
                 );
             if (ERC20(input).allowance(address(this), _market) == 0) {
@@ -248,7 +280,7 @@ contract RubiconRouter {
 
         // send tokens back to sender if not keeping here
         if (to != address(this)) {
-            ERC20(route[route.length - 1]).transfer(to, currentAmount);
+            IERC20(route[route.length - 1]).safeTransfer(to, currentAmount);
         }
 
         emit LogSwap(
@@ -263,27 +295,23 @@ contract RubiconRouter {
         return currentAmount;
     }
 
-    /// @dev this function takes a user's entire balance for the trade in case they want to do a max trade so there's no leftover dust
-    function swapEntireBalance(
-        uint256 buy_amt_min,
-        address[] calldata route, // First address is what is being payed, Last address is what is being bought
-        uint256 expectedMarketFeeBPS
-    ) external returns (uint256) {
-        //swaps msg.sender entire balance in the trade
-        uint256 maxAmount = ERC20(route[0]).balanceOf(msg.sender);
-        ERC20(route[0]).transferFrom(
-            msg.sender,
-            address(this),
-            maxAmount // Account for expected fee
-        );
-        return
-            _swap(
-                maxAmount,
-                maxAmount.sub(buy_amt_min.mul(expectedMarketFeeBPS).div(10000)), //account for fee
-                route,
-                expectedMarketFeeBPS,
-                msg.sender
-            );
+    /// @notice A function that returns the index of uid from array
+    /// @dev uid must be in array for the purposes of this contract to enforce outstanding trades per strategist are tracked correctly
+    /// @dev can be used to check if a value is in a given array, and at what index
+    function getIndexFromElement(uint256 uid, uint256[] storage array)
+        internal
+        view
+        returns (uint256 _index)
+    {
+        bool assigned = false;
+        for (uint256 index = 0; index < array.length; index++) {
+            if (uid == array[index]) {
+                _index = index;
+                assigned = true;
+                return _index;
+            }
+        }
+        require(assigned, "Didnt Find that element in live list, cannot scrub");
     }
 
     /// @dev this function takes a user's entire balance for the trade in case they want to do a max trade so there's no leftover dust
@@ -293,7 +321,11 @@ contract RubiconRouter {
         uint256 max_fill_amount
     ) external returns (uint256 fill) {
         //swaps msg.sender's entire balance in the trade
-        uint256 maxAmount = ERC20(buy_gem).balanceOf(msg.sender);
+
+        uint256 maxAmount = _calcAmountAfterFee(
+            ERC20(buy_gem).balanceOf(msg.sender)
+        );
+        IERC20(buy_gem).safeTransferFrom(msg.sender, address(this), maxAmount);
         fill = RubiconMarket(RubiconMarketAddress).buyAllAmount(
             buy_gem,
             maxAmount,
@@ -310,7 +342,11 @@ contract RubiconRouter {
         uint256 min_fill_amount
     ) external returns (uint256 fill) {
         //swaps msg.sender entire balance in the trade
-        uint256 maxAmount = ERC20(buy_gem).balanceOf(msg.sender);
+
+        uint256 maxAmount = _calcAmountAfterFee(
+            ERC20(buy_gem).balanceOf(msg.sender)
+        );
+        IERC20(buy_gem).safeTransferFrom(msg.sender, address(this), maxAmount);
         fill = RubiconMarket(RubiconMarketAddress).sellAllAmount(
             pay_gem,
             maxAmount,
@@ -318,6 +354,15 @@ contract RubiconRouter {
             min_fill_amount
         );
         ERC20(buy_gem).transfer(msg.sender, fill);
+    }
+
+    function _calcAmountAfterFee(uint256 amount)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 feeBPS = RubiconMarket(RubiconMarketAddress).getFeeBPS();
+        return amount.sub(amount.mul(feeBPS).div(10000));
     }
 
     // ** Native ETH Wrapper Functions **
@@ -334,7 +379,7 @@ contract RubiconRouter {
             max_fill_amount.mul(expectedMarketFeeBPS).div(10000)
         );
         require(
-            msg.value >= max_fill_withFee,
+            msg.value == max_fill_withFee,
             "must send as much ETH as max_fill_withFee"
         );
         WETH9(wethAddress).deposit{value: max_fill_withFee}(); // Pay with native ETH -> WETH
@@ -345,7 +390,7 @@ contract RubiconRouter {
             ERC20(wethAddress),
             max_fill_amount
         );
-        ERC20(buy_gem).transfer(msg.sender, buy_amt);
+        IERC20(buy_gem).safeTransfer(msg.sender, buy_amt);
 
         uint256 _after = ERC20(_weth).balanceOf(address(this));
         uint256 delta = _after - _before;
@@ -353,7 +398,9 @@ contract RubiconRouter {
         // Return unspent coins to sender
         if (delta > 0) {
             WETH9(wethAddress).withdraw(delta);
-            msg.sender.transfer(delta);
+            // msg.sender.transfer(delta);
+            (bool success, ) = msg.sender.call{value: delta}("");
+            require(success, "Transfer failed.");
         }
     }
 
@@ -362,8 +409,12 @@ contract RubiconRouter {
         uint256 buy_amt,
         ERC20 pay_gem,
         uint256 max_fill_amount
-    ) external returns (uint256 fill) {
-        ERC20(pay_gem).transferFrom(msg.sender, address(this), max_fill_amount); //transfer pay here
+    ) external beGoneReentrantScum returns (uint256 fill) {
+        IERC20(pay_gem).safeTransferFrom(
+            msg.sender,
+            address(this),
+            max_fill_amount
+        ); //transfer pay here
         fill = RubiconMarket(RubiconMarketAddress).buyAllAmount(
             ERC20(wethAddress),
             buy_amt,
@@ -371,11 +422,16 @@ contract RubiconRouter {
             max_fill_amount
         );
         WETH9(wethAddress).withdraw(buy_amt); // Fill in WETH
-        msg.sender.transfer(buy_amt); // Return native ETH
+
         // Return unspent coins to sender
         if (max_fill_amount > fill) {
-            ERC20(pay_gem).transfer(msg.sender, max_fill_amount - fill);
+            IERC20(pay_gem).safeTransfer(msg.sender, max_fill_amount - fill);
         }
+
+        // msg.sender.transfer(buy_amt); // Return native ETH
+        (bool success, ) = msg.sender.call{value: buy_amt}("");
+        require(success, "Transfer failed.");
+
         return fill;
     }
 
@@ -388,7 +444,7 @@ contract RubiconRouter {
         uint256 pos //position to insert offer, 0 should be used if unknown
     ) external payable returns (uint256) {
         require(
-            msg.value >= pay_amt,
+            msg.value == pay_amt,
             "didnt send enough native ETH for WETH offer"
         );
         uint256 _before = ERC20(buy_gem).balanceOf(address(this));
@@ -400,10 +456,14 @@ contract RubiconRouter {
             buy_gem,
             pos
         );
+
+        // Track the user's order so they can cancel it
+        userNativeAssetOrders[msg.sender].push(id);
+
         uint256 _after = ERC20(buy_gem).balanceOf(address(this));
         if (_after > _before) {
             //return any potential fill amount on the offer
-            ERC20(buy_gem).transfer(msg.sender, _after - _before);
+            IERC20(buy_gem).safeTransfer(msg.sender, _after - _before);
         }
         return id;
     }
@@ -415,8 +475,8 @@ contract RubiconRouter {
         uint256 buy_amt, //maker (ask) buy how much
         // ERC20 nativeETH, //maker (ask) buy which token
         uint256 pos //position to insert offer, 0 should be used if unknown
-    ) external returns (uint256) {
-        ERC20(pay_gem).transferFrom(msg.sender, address(this), pay_amt);
+    ) external beGoneReentrantScum returns (uint256) {
+        IERC20(pay_gem).safeTransferFrom(msg.sender, address(this), pay_amt);
 
         uint256 _before = ERC20(wethAddress).balanceOf(address(this));
         uint256 id = RubiconMarket(RubiconMarketAddress).offer(
@@ -426,18 +486,39 @@ contract RubiconRouter {
             ERC20(wethAddress),
             pos
         );
+
+        // Track the user's order so they can cancel it
+        userNativeAssetOrders[msg.sender].push(id);
+
         uint256 _after = ERC20(wethAddress).balanceOf(address(this));
         if (_after > _before) {
             //return any potential fill amount on the offer as native ETH
             uint256 delta = _after - _before;
             WETH9(wethAddress).withdraw(delta);
-            msg.sender.transfer(delta);
+            // msg.sender.transfer(delta);
+            (bool success, ) = msg.sender.call{value: delta}("");
+            require(success, "Transfer failed.");
         }
+
         return id;
     }
 
     // Cancel an offer made in WETH
-    function cancelForETH(uint256 id) external returns (bool outcome) {
+    function cancelForETH(uint256 id)
+        external
+        beGoneReentrantScum
+        returns (bool outcome)
+    {
+        uint256 indexOrFail = getIndexFromElement(
+            id,
+            userNativeAssetOrders[msg.sender]
+        );
+        /// @dev Verify that the offer the user is trying to cancel is their own
+        require(
+            userNativeAssetOrders[msg.sender][indexOrFail] == id,
+            "You did not provide an Id for an offer you own"
+        );
+
         (uint256 pay_amt, ERC20 pay_gem, , ) = RubiconMarket(
             RubiconMarketAddress
         ).getOffer(id);
@@ -448,47 +529,58 @@ contract RubiconRouter {
         // Cancel order and receive WETH here in amount of pay_amt
         outcome = RubiconMarket(RubiconMarketAddress).cancel(id);
         WETH9(wethAddress).withdraw(pay_amt);
-        msg.sender.transfer(pay_amt);
+        // msg.sender.transfer(pay_amt);
+        (bool success, ) = msg.sender.call{value: pay_amt}("");
+        require(success, "Transfer failed.");
     }
 
     // Deposit native ETH -> WETH pool
     function depositWithETH(uint256 amount, address targetPool)
         external
         payable
+        beGoneReentrantScum
         returns (uint256 newShares)
     {
         IERC20 target = IBathToken(targetPool).underlyingToken();
         require(target == ERC20(wethAddress), "target pool not weth pool");
-        require(msg.value >= amount, "didnt send enough eth");
+        require(msg.value == amount, "didnt send enough eth");
 
         if (target.allowance(address(this), targetPool) == 0) {
-            target.approve(targetPool, amount);
+            target.safeApprove(targetPool, amount);
         }
 
         WETH9(wethAddress).deposit{value: amount}();
         newShares = IBathToken(targetPool).deposit(amount);
         //Send back bathTokens to sender
-        ERC20(targetPool).transfer(msg.sender, newShares);
+        IERC20(targetPool).safeTransfer(msg.sender, newShares);
     }
 
     // Withdraw native ETH <- WETH pool
     function withdrawForETH(uint256 shares, address targetPool)
         external
         payable
+        beGoneReentrantScum
         returns (uint256 withdrawnWETH)
     {
         IERC20 target = IBathToken(targetPool).underlyingToken();
         require(target == ERC20(wethAddress), "target pool not weth pool");
-        require(
-            IBathToken(targetPool).balanceOf(msg.sender) >= shares,
-            "don't own enough shares"
+
+        uint256 startingWETHBalance = ERC20(wethAddress).balanceOf(
+            address(this)
         );
         IBathToken(targetPool).transferFrom(msg.sender, address(this), shares);
         withdrawnWETH = IBathToken(targetPool).withdraw(shares);
+        uint256 postWithdrawWETH = ERC20(wethAddress).balanceOf(address(this));
+        require(
+            withdrawnWETH == (postWithdrawWETH.sub(startingWETHBalance)),
+            "bad WETH value hacker"
+        );
         WETH9(wethAddress).withdraw(withdrawnWETH);
 
         //Send back withdrawn native eth to sender
-        msg.sender.transfer(withdrawnWETH);
+        // msg.sender.transfer(withdrawnWETH);
+        (bool success, ) = msg.sender.call{value: withdrawnWETH}("");
+        require(success, "Transfer failed.");
     }
 
     function swapWithETH(
@@ -502,7 +594,7 @@ contract RubiconRouter {
             pay_amt.mul(expectedMarketFeeBPS).div(10000)
         );
         require(
-            msg.value >= amtWithFee,
+            msg.value == amtWithFee,
             "must send enough native ETH to pay as weth and account for fee"
         );
         WETH9(wethAddress).deposit{value: amtWithFee}();
@@ -526,15 +618,13 @@ contract RubiconRouter {
             route[route.length - 1] == wethAddress,
             "target of swap is not WETH"
         );
-        //Transfer tokens here first and account for fee
-        require(
-            ERC20(route[0]).transferFrom(
-                msg.sender,
-                address(this),
-                pay_amt.add(pay_amt.mul(expectedMarketFeeBPS).div(10000))
-            ),
-            "initial ERC20 transfer failed"
+
+        IERC20(route[0]).safeTransferFrom(
+            msg.sender,
+            address(this),
+            pay_amt.add(pay_amt.mul(expectedMarketFeeBPS).div(10000))
         );
+
         fill = _swap(
             pay_amt,
             buy_amt_min,
@@ -545,6 +635,21 @@ contract RubiconRouter {
 
         WETH9(wethAddress).withdraw(fill);
         // msg.sender.transfer(fill);
-        msg.sender.transfer(fill);
+        (bool success, ) = msg.sender.call{value: fill}("");
+        require(success, "Transfer failed.");
+    }
+
+    /// @dev View function to query a user's rewards they can claim via claimAllUserBonusTokens
+    function checkClaimAllUserBonusTokens(
+        address user,
+        address[] memory targetBathTokens,
+        address token
+    ) public view returns (uint256 earnedAcrossPools) {
+        for (uint256 index = 0; index < targetBathTokens.length; index++) {
+            address targetBT = targetBathTokens[index];
+            address targetBathBuddy = IBathToken(targetBT).bathBuddy();
+            uint256 earned = IBathBuddy(targetBathBuddy).earned(user, token);
+            earnedAcrossPools += earned;
+        }
     }
 }

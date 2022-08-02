@@ -23,15 +23,14 @@ interface IBathToken is IERC20 {
         uint256 rebalAmt
     ) external;
 
-    // Note: commenting out assuming that delegatecalls to the target will suffice, maybe needed for v0 migration ease of upgradeability... trying it out
-    // function initialize(
-    //     IERC20 token,
-    //     address market,
-    //     address _bathHouse,
-    //     address _feeTo
-    // ) external;
-
     function approveMarket() external;
+
+    function asset() external view returns (address assetTokenAddress); //4626
+
+    // Storage var that hold rewards tokens
+    function bathBuddy() external view returns (address);
+
+    function setBathBuddy(address newBathHouse) external;
 
     function underlyingToken() external returns (IERC20 erc20);
 

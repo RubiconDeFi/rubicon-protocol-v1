@@ -90,25 +90,6 @@ contract DSMath {
     }
 }
 
-// /// @notice ERC-20 interface as derived from EIP-20
-// contract ERC20 {
-//     function totalSupply() public view returns (uint256);
-
-//     function balanceOf(address guy) public view returns (uint256);
-
-//     function allowance(address src, address guy) public view returns (uint256);
-
-//     function approve(address guy, uint256 wad) public returns (bool);
-
-//     function transfer(address dst, uint256 wad) public returns (bool);
-
-//     function transferFrom(
-//         address src,
-//         address dst,
-//         uint256 wad
-//     ) public returns (bool);
-// }
-
 /// @notice Events contract for logging trade activity on Rubicon Market
 /// @dev Provides the key event logs that are used in all core functionality of exchanging on the Rubicon Market
 contract EventfulMarket {
@@ -177,7 +158,7 @@ contract EventfulMarket {
         uint64 timestamp
     );
 
-    event OfferDeleted(uint256 id);
+    event OfferDeleted(bytes32 indexed id);
 }
 
 /// @notice Core trading logic for ERC-20 pairs, an orderbook, and transacting of tokens
@@ -340,7 +321,7 @@ contract SimpleMarket is EventfulMarket, DSMath {
 
         if (offers[id].pay_amt == 0) {
             delete offers[id];
-            emit OfferDeleted(id);
+            emit OfferDeleted(bytes32(id));
         }
 
         return true;
@@ -438,7 +419,7 @@ contract SimpleMarket is EventfulMarket, DSMath {
     }
 
     // Fee logic
-    function getFeeBPS() internal view returns (uint256) {
+    function getFeeBPS() public view returns (uint256) {
         return feeBPS;
     }
 }
@@ -555,6 +536,8 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
         /// @notice The market fee recipient
         feeTo = _feeTo;
 
+        require(_feeTo != address(0));
+
         owner = msg.sender;
         emit LogSetOwner(msg.sender);
 
@@ -609,19 +592,18 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
     //     * available to everyone without authorization.
     //     * no sorting is done.
     //
-    function offer(
-        uint256 pay_amt, //maker (ask) sell how much
-        ERC20 pay_gem, //maker (ask) sell which token
-        uint256 buy_amt, //taker (ask) buy how much
-        ERC20 buy_gem //taker (ask) buy which token
-    ) public override returns (uint256) {
-        require(!locked, "Reentrancy attempt");
+    // function offer(
+    //     uint256 pay_amt, //maker (ask) sell how much
+    //     ERC20 pay_gem, //maker (ask) sell which token
+    //     uint256 buy_amt, //taker (ask) buy how much
+    //     ERC20 buy_gem //taker (ask) buy which token
+    // ) public override returns (uint256) {
+    //     require(!locked, "Reentrancy attempt");
 
-
-            function(uint256, ERC20, uint256, ERC20) returns (uint256) fn
-         = matchingEnabled ? _offeru : super.offer;
-        return fn(pay_amt, pay_gem, buy_amt, buy_gem);
-    }
+    //     function(uint256, ERC20, uint256, ERC20)
+    //         returns (uint256) fn = matchingEnabled ? _offeru : super.offer;
+    //     return fn(pay_amt, pay_gem, buy_amt, buy_gem);
+    // }
 
     // Make a new offer. Takes funds from the caller into market escrow.
     function offer(
@@ -660,13 +642,13 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
     {
         require(!locked, "Reentrancy attempt");
 
-        //Optional distribution on trade
-        if (AqueductDistributionLive) {
-            IAqueduct(AqueductAddress).distributeToMakerAndTaker(
-                getOwner(id),
-                msg.sender
-            );
-        }
+        // //Optional distribution on trade
+        // if (AqueductDistributionLive) {
+        //     IAqueduct(AqueductAddress).distributeToMakerAndTaker(
+        //         getOwner(id),
+        //         msg.sender
+        //     );
+        // }
         function(uint256, uint256) returns (bool) fn = matchingEnabled
             ? _buys
             : super.buy;
@@ -692,21 +674,21 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
         return super.cancel(id); //delete the offer.
     }
 
-    //insert offer into the sorted list
-    //keepers need to use this function
-    function insert(
-        uint256 id, //maker (ask) id
-        uint256 pos //position to insert into
-    ) public returns (bool) {
-        require(!locked, "Reentrancy attempt");
-        require(!isOfferSorted(id)); //make sure offers[id] is not yet sorted
-        require(isActive(id)); //make sure offers[id] is active
+    // //insert offer into the sorted list
+    // //keepers need to use this function
+    // function insert(
+    //     uint256 id, //maker (ask) id
+    //     uint256 pos //position to insert into
+    // ) public returns (bool) {
+    //     require(!locked, "Reentrancy attempt");
+    //     require(!isOfferSorted(id)); //make sure offers[id] is not yet sorted
+    //     require(isActive(id)); //make sure offers[id] is active
 
-        _hide(id); //remove offer from unsorted offers list
-        _sort(id, pos); //put offer into the sorted offers list
-        emit LogInsert(msg.sender, id);
-        return true;
-    }
+    //     _hide(id); //remove offer from unsorted offers list
+    //     _sort(id, pos); //put offer into the sorted offers list
+    //     emit LogInsert(msg.sender, id);
+    //     return true;
+    // }
 
     //deletes _rank [id]
     //  Function should be called by keepers.
@@ -757,15 +739,16 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
     //    keepers using insert().
     //    If matchingEnabled is false then RubiconMarket is reverted to ExpiringMarket,
     //    and matching is not done, and sorted lists are disabled.
-    function setMatchingEnabled(bool matchingEnabled_)
-        external
-        auth
-        returns (bool)
-    {
-        matchingEnabled = matchingEnabled_;
-        emit LogMatchingEnabled(matchingEnabled);
-        return true;
-    }
+    /// @dev Matching always enabled
+    // function setMatchingEnabled(bool matchingEnabled_)
+    //     external
+    //     auth
+    //     returns (bool)
+    // {
+    //     matchingEnabled = matchingEnabled_;
+    //     emit LogMatchingEnabled(matchingEnabled);
+    //     return true;
+    // }
 
     //return the best offer for a token pair
     //      the best offer is the lowest one if it's an ask,
@@ -841,7 +824,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
 
             // There is a chance that pay_amt is smaller than 1 wei of the other token
             if (
-                pay_amt * 1 ether <
+                mul(pay_amt, 1 ether) <
                 wdiv(offers[offerId].buy_amt, offers[offerId].pay_amt)
             ) {
                 break; //We consider that all amount is sold
@@ -854,7 +837,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
             } else {
                 // if lower
                 uint256 baux = rmul(
-                    pay_amt * 10**9,
+                    mul(pay_amt, 10**9),
                     rdiv(offers[offerId].pay_amt, offers[offerId].buy_amt)
                 ) / 10**9;
                 fill_amt = add(fill_amt, baux); //Add amount bought to acumulator
@@ -880,7 +863,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
 
             // There is a chance that buy_amt is smaller than 1 wei of the other token
             if (
-                buy_amt * 1 ether <
+                mul(buy_amt, 1 ether) <
                 wdiv(offers[offerId].pay_amt, offers[offerId].buy_amt)
             ) {
                 break; //We consider that all amount is sold
@@ -895,7 +878,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
                 fill_amt = add(
                     fill_amt,
                     rmul(
-                        buy_amt * 10**9,
+                        mul(buy_amt, 10**9),
                         rdiv(offers[offerId].buy_amt, offers[offerId].pay_amt)
                     ) / 10**9
                 ); //Add amount sold to acumulator
@@ -924,7 +907,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
         fill_amt = add(
             fill_amt,
             rmul(
-                pay_amt * 10**9,
+                mul(pay_amt, 10**9),
                 rdiv(offers[offerId].pay_amt, offers[offerId].buy_amt)
             ) / 10**9
         ); //Add proportional amount of last offer to buy accumulator
@@ -948,7 +931,7 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
         fill_amt = add(
             fill_amt,
             rmul(
-                buy_amt * 10**9,
+                mul(buy_amt, 10**9),
                 rdiv(offers[offerId].buy_amt, offers[offerId].pay_amt)
             ) / 10**9
         ); //Add proportional amount of last offer to pay accumulator
@@ -1254,8 +1237,13 @@ contract RubiconMarket is MatchingEvents, ExpiringMarket, DSNote {
     }
 
     function setFeeTo(address newFeeTo) external auth returns (bool) {
+        require(newFeeTo != address(0));
         feeTo = newFeeTo;
         return true;
+    }
+
+    function getFeeTo() external view returns (address) {
+        return feeTo;
     }
 }
 

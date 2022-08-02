@@ -94,6 +94,8 @@ contract("Bath Pair", (accounts) => {
     });
   });
   describe("Unit Tests", async function () {
+    // ** Here we want to walk through each step of the full market-making flow while checking how key variables change **
+
     // 1. Place market making trades
     it("function placeMarketMakingTrades - a strategist can market-make for any ERC-20 pair", async () => {
       // WETH-DAI: 1: ($90, $110)
@@ -126,5 +128,6 @@ contract("Bath Pair", (accounts) => {
         web3.utils.toWei(bidDen.toString())
       );
     });
+    // 1a-1n make a test for each check along the way
   });
 });

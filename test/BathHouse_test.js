@@ -13,6 +13,7 @@ var should = require("chai").should();
 function logIndented(...args) {
   console.log("       ", ...args);
 }
+const MINLIQUIDITYSHARES = 10 ** 3;
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -84,6 +85,11 @@ contract("Bath House", (accounts) => {
     it("public uint timeDelay - set correctly", async () => {
       assert.equal(await bathHouseInstance.timeDelay(), 10);
     });
+    // DEPRECATED
+    // it("public uint maxOutstandingPairCount - set correctly", async () => {
+    //   // TODO: clean up key inputs like 20 into variables for easier readability and testing
+    //   assert.equal(await bathHouseInstance.maxOutstandingPairCount(), 20);
+    // });
     it("public address approvedPairContract - set correctly", async () => {
       assert.equal(
         await bathHouseInstance.approvedPairContract(),
@@ -91,6 +97,7 @@ contract("Bath House", (accounts) => {
       );
     });
     it("public uint bpsToStrategists - set correctly", async () => {
+      //TODO: this is a hardcode rn
       assert.equal(await bathHouseInstance.bpsToStrategists(), 20);
     });
     it("public mapping tokenToBathToken - initializes as empty before any createBathToken calls", async () => {
@@ -165,11 +172,16 @@ contract("Bath House", (accounts) => {
       );
       const _newBathToken = await BathToken.at(newbathTokenAddress);
       const rawUserBalance = await _newBathToken.balanceOf(accounts[1]);
-      const userBalance = ethers.utils.formatUnits(
+      logIndented("this rawUserBalance", rawUserBalance.toString());
+      // const userBalance = ethers.utils.formatUnits(
+      //   rawUserBalance.toString(),
+      //   decimals
+      // );
+      // should.equal(userBalance.split(".")[0], "100");
+      should.equal(
         rawUserBalance.toString(),
-        decimals
+        initialLiquidityNew.sub(MINLIQUIDITYSHARES).toString()
       );
-      should.equal(userBalance.split(".")[0], "100");
     });
   });
 });

@@ -13,6 +13,13 @@ function logIndented(...args) {
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
+//Special attention to:
+// - Lossless outstanding amount in bathTokens - closed loop!
+// - Permissions and potential exploits
+
+//Edge Case:
+// - oustanding amount minor change - is this relevant? How does it affect mint ratio?
+
 contract("Bath Token", (accounts) => {
   let rubiconMarketInstance;
   let bathHouseInstance;
@@ -31,6 +38,7 @@ contract("Bath Token", (accounts) => {
       DAIInstance = await DAI.deployed();
       WETHInstance = await WETH.deployed();
       bathTokenImplementation = await BathToken.new();
+
     });
     it("Is successfully initialized", async () => {
       await bathHouseInstance.initialize(
@@ -68,12 +76,17 @@ contract("Bath Token", (accounts) => {
       let newBathToken = await bathHouseInstance.tokenToBathToken(
         newCoin.address
       );
+      // logIndented("Getting this new bathToken", newBathToken);
       let bathToken = await BathToken.at(newBathToken);
       let bathTokenName = await bathToken.name();
       let bathTokenSymbol = await bathToken.symbol();
       const expectedBathTokenName = "bath" + newCoinSymbol;
       assert.equal(bathTokenSymbol, expectedBathTokenName);
       assert.equal(bathTokenName, expectedBathTokenName + " v1");
+
+      // logIndented("name", bathTokenName);
+      // logIndented("symbol", bathTokenSymbol);
     });
+    it("BathTokens are successfully initialized whenever they are created", async () => {});
   });
 });
