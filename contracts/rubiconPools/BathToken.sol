@@ -9,12 +9,15 @@ pragma solidity =0.7.6;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
+// import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "../interfaces/IBathHouse.sol";
 import "../interfaces/IRubiconMarket.sol";
 import "../interfaces/IBathBuddy.sol";
 
 contract BathToken {
     using SafeMath for uint256;
+    using SafeERC20 for IERC20;
 
     /// *** Storage Variables ***
 
@@ -77,7 +80,10 @@ contract BathToken {
     address[] public bonusTokens;
 
     /// @notice Address of the OZ Vesting Wallet which acts as means to vest bonusToken incentives to pool HODLers
-    IBathBuddy public rewardsVestingWallet;
+    IBathBuddy public bathBuddy;
+
+    /// @dev Reentrancy protection
+    bool locked;
 
     /// *** Events ***
 
@@ -175,6 +181,16 @@ contract BathToken {
         uint256 shares
     );
 
+    /// @notice Log bonus token reward event
+    event LogClaimBonusTokn(
+        address indexed caller,
+        address indexed receiver,
+        address indexed owner,
+        uint256 assets,
+        uint256 shares,
+        IERC20 bonusToken
+    );
+
     /// *** Constructor ***
 
     /// @notice Proxy-safe initialization of storage; the constructor
@@ -182,7 +198,7 @@ contract BathToken {
         ERC20 token,
         address market,
         address _feeTo
-    ) external {
+    ) external nonReentrant {
         require(!initialized);
         string memory _symbol = string(
             abi.encodePacked(("bath"), token.symbol())
@@ -192,6 +208,7 @@ contract BathToken {
         RubiconMarketAddress = market;
         bathHouse = msg.sender; //NOTE: assumed admin is creator on BathHouse
 
+        name = string(abi.encodePacked(_symbol, (" v1")));
         uint256 chainId;
         assembly {
             chainId := chainid()
@@ -207,8 +224,10 @@ contract BathToken {
                 address(this)
             )
         );
-        name = string(abi.encodePacked(_symbol, (" v1")));
         decimals = token.decimals(); // v1 Change - 4626 Adherence
+
+        // Complete constract instantiation via CEI pattern
+        initialized = true;
 
         // Add infinite approval of Rubicon Market for this asset
         IERC20(address(token)).approve(RubiconMarketAddress, 2**256 - 1);
@@ -216,9 +235,6 @@ contract BathToken {
 
         feeTo = address(this); //This contract is the fee recipient, rewarding HODLers
         feeBPS = 3; //Fee set to 3 BPS initially
-
-        // Complete constract instantiation
-        initialized = true;
     }
 
     /// *** Modifiers ***
@@ -237,6 +253,14 @@ contract BathToken {
             "caller is not bathHouse - BathToken.sol"
         );
         _;
+    }
+
+    /// @dev nonReentrant
+    modifier nonReentrant() {
+        require(!locked);
+        locked = true;
+        _;
+        locked = false;
     }
 
     /// *** External Functions - Only Bath House / Admin ***
@@ -258,6 +282,7 @@ contract BathToken {
 
     /// @notice Admin-only function to set a Bath Token's feeBPS
     function setFeeBPS(uint256 _feeBPS) external onlyBathHouse {
+        require(_feeBPS <= 300, "Fee can never exceed 300 bps");
         feeBPS = _feeBPS;
     }
 
@@ -266,9 +291,15 @@ contract BathToken {
         feeTo = _feeTo;
     }
 
+    /// @notice Admin-only function to set THE BathBuddy which holds all ERC20 rewards
+    function setBathBuddy(address newBuddy) external onlyBathHouse {
+        bathBuddy = IBathBuddy(newBuddy);
+    }
+
     /// @notice Admin-only function to add a bonus token to bonusTokens for pool incentives
     function setBonusToken(address newBonusERC20) external onlyBathHouse {
         bonusTokens.push(newBonusERC20);
+        require(bonusTokens.length < 5, "too many tokens in this party");
     }
 
     /// *** External Functions - Only Approved Bath Pair / Strategist Contract ***
@@ -349,12 +380,13 @@ contract BathToken {
         uint256 stratProportion,
         uint256 rebalAmt
     ) external onlyPair {
+        require(filledAssetToRebalance != asset(), "must not be underlying");
         uint256 stratReward = (stratProportion.mul(rebalAmt)).div(10000);
-        IERC20(filledAssetToRebalance).transfer(
+        IERC20(filledAssetToRebalance).safeTransfer(
             destination,
             rebalAmt.sub(stratReward)
         );
-        IERC20(filledAssetToRebalance).transfer(msg.sender, stratReward);
+        IERC20(filledAssetToRebalance).safeTransfer(msg.sender, stratReward);
 
         emit LogRebalance(
             IERC20(underlyingToken),
@@ -374,6 +406,7 @@ contract BathToken {
     /// @notice Withdraw your bathTokens for the underlyingToken
     function withdraw(uint256 _shares)
         external
+        nonReentrant
         returns (uint256 amountWithdrawn)
     {
         return _withdraw(_shares, msg.sender);
@@ -432,7 +465,11 @@ contract BathToken {
     }
 
     // Single asset override to reflect old functionality
-    function deposit(uint256 assets) public returns (uint256 shares) {
+    function deposit(uint256 assets)
+        public
+        nonReentrant
+        returns (uint256 shares)
+    {
         // Note: msg.sender is the same throughout the same contract context
         return _deposit(assets, msg.sender);
     }
@@ -440,6 +477,7 @@ contract BathToken {
     /// @notice * EIP 4626 *
     function deposit(uint256 assets, address receiver)
         public
+        nonReentrant
         returns (uint256 shares)
     {
         return _deposit(assets, receiver);
@@ -463,6 +501,7 @@ contract BathToken {
     /// @notice * EIP 4626 *
     function mint(uint256 shares, address receiver)
         public
+        nonReentrant
         returns (uint256 assets)
     {
         assets = previewMint(shares);
@@ -494,10 +533,9 @@ contract BathToken {
         if (totalSupply == 0) {
             shares = 0;
         } else {
-            uint256 amountWithdrawn;
-            uint256 _fee = assets.mul(feeBPS).div(10000);
-            amountWithdrawn = assets.sub(_fee);
-            shares = convertToShares(amountWithdrawn);
+            shares = convertToShares(
+                assets.add(assets.mul(feeBPS).div((uint256(10000).sub(feeBPS))))
+            );
         }
     }
 
@@ -506,7 +544,7 @@ contract BathToken {
         uint256 assets,
         address receiver,
         address owner
-    ) public returns (uint256 shares) {
+    ) public nonReentrant returns (uint256 shares) {
         require(
             owner == msg.sender,
             "This implementation does not support non-sender owners from withdrawing user shares"
@@ -543,7 +581,7 @@ contract BathToken {
         uint256 shares,
         address receiver,
         address owner
-    ) public returns (uint256 assets) {
+    ) public nonReentrant returns (uint256 assets) {
         require(
             owner == msg.sender,
             "This implementation does not support non-sender owners from withdrawing user shares"
@@ -562,16 +600,23 @@ contract BathToken {
         uint256 _before = underlyingToken.balanceOf(address(this));
 
         // **Assume caller is depositor**
-        underlyingToken.transferFrom(msg.sender, address(this), assets);
+        underlyingToken.safeTransferFrom(msg.sender, address(this), assets);
         uint256 _after = underlyingToken.balanceOf(address(this));
         assets = _after.sub(_before); // Additional check for deflationary tokens
 
-        (totalSupply == 0) ? shares = assets : shares = (
-            assets.mul(totalSupply)
-        ).div(_pool);
+        if (totalSupply == 0) {
+            uint256 minLiquidityShare = 10**3;
+            shares = assets.sub(minLiquidityShare);
+            // Handle protecting from an initial supply spoof attack
+            _mint(address(0), (minLiquidityShare));
+        } else {
+            shares = (assets.mul(totalSupply)).div(_pool);
+        }
 
         // Send shares to designated target
         _mint(receiver, shares);
+
+        require(shares != 0, "No shares minted");
         emit LogDeposit(
             assets,
             underlyingToken,
@@ -584,25 +629,21 @@ contract BathToken {
         emit Deposit(msg.sender, msg.sender, assets, shares);
     }
 
+    /// @dev assumes that msg.sender is the shareholder
     /// @notice Withdraw share for the user and send underlyingToken to receiver with any accrued yield and incentive tokens
     function _withdraw(uint256 _shares, address receiver)
         internal
         returns (uint256 amountWithdrawn)
     {
-        uint256 _initialTotalSupply = totalSupply;
-
-        // Distribute network rewards first in order to handle bonus token == underlying token case; it only releases vested tokens in this call
-        distributeBonusTokenRewards(receiver, _shares, _initialTotalSupply);
-
-        uint256 r = (underlyingBalance().mul(_shares)).div(_initialTotalSupply);
+        uint256 r = (underlyingBalance().mul(_shares)).div(totalSupply);
         _burn(msg.sender, _shares);
         uint256 _fee = r.mul(feeBPS).div(10000);
         // If FeeTo == address(0) then the fee is effectively accrued by the pool
         if (feeTo != address(0)) {
-            underlyingToken.transfer(feeTo, _fee);
+            underlyingToken.safeTransfer(feeTo, _fee);
         }
         amountWithdrawn = r.sub(_fee);
-        underlyingToken.transfer(receiver, amountWithdrawn);
+        underlyingToken.safeTransfer(receiver, amountWithdrawn);
 
         emit LogWithdraw(
             amountWithdrawn,
@@ -624,30 +665,40 @@ contract BathToken {
         );
     }
 
+    // // User can recieve the awards they have accrued on BathBuddy
+    function getBonusTokenReward(address rewardToken) public {
+        IBathBuddy(bathBuddy).getReward(IERC20(rewardToken), msg.sender);
+    }
+
+    // // User can recieve the awards they have accrued on BathBuddy
+    function getAllBonusTokenReward() public {
+        distributeBonusTokenRewards(msg.sender);
+    }
+
+    /// Must allow the custom receiver option of the 4626 withdraw call path
     /// @notice Function to distibute non-underlyingToken Bath Token incentives to pool withdrawers
-    /// @dev Note that bonusTokens adhere to the same feeTo and feeBPS pattern. Fees sit on BathBuddy to act as effectively accrued to the pool.
-    function distributeBonusTokenRewards(
-        address receiver,
-        uint256 sharesWithdrawn,
-        uint256 initialTotalSupply
-    ) internal {
+    /// @dev Note that bonusTokens adhere to the same feeTo and feeBPS pattern
+    /// @dev Note the edge case in which the bonus token is the underlyingToken, here we simply release() to the pool and skip
+    function distributeBonusTokenRewards(address receiver) internal {
+        // Note, receiver must be owner <- enforced in the two withdraw entry paths
+        // require(msg.sender == receiver, "You cannot claim someone else`s bonus tokens");
+        // Verbose check:
+        // require(initialTotalSupply == sharesWithdrawn + totalSupply);
         if (bonusTokens.length > 0) {
             for (uint256 index = 0; index < bonusTokens.length; index++) {
                 IERC20 token = IERC20(bonusTokens[index]);
-                // Note: Shares already burned in Bath Token _withdraw
+                require(address(token) != address(0), "bad bonus token");
+                // Hit BathBuddy permissioned, nonReentrant function to handle paying out
+                IBathBuddy(bathBuddy).getReward(token, receiver);
 
-                // Pair each bonus token with a lightly adapted OZ Vesting wallet. Each time a user withdraws, they
-                //  are released their relative share of this pool, of vested BathBuddy rewards
-                // The BathBuddy pool should accrue ERC-20 rewards just like OZ VestingWallet and simply just release the withdrawer's relative share of releaseable() tokens
-                if (rewardsVestingWallet != IBathBuddy(0)) {
-                    rewardsVestingWallet.release(
-                        (token),
-                        receiver,
-                        sharesWithdrawn,
-                        initialTotalSupply,
-                        feeBPS
-                    );
-                }
+                emit LogClaimBonusTokn(
+                    msg.sender,
+                    receiver,
+                    msg.sender,
+                    IBathBuddy(bathBuddy).earned(msg.sender, address(token)),
+                    balanceOf[msg.sender],
+                    token
+                );
             }
         }
     }
@@ -655,12 +706,16 @@ contract BathToken {
     /// *** ERC - 20 Standard ***
 
     function _mint(address to, uint256 value) internal {
+        // Used for bonus token accounting
+        distributeBonusTokenRewards(to);
         totalSupply = totalSupply.add(value);
         balanceOf[to] = balanceOf[to].add(value);
         emit Transfer(address(0), to, value);
     }
 
     function _burn(address from, uint256 value) internal {
+        // Used for bonus token accounting
+        distributeBonusTokenRewards(from);
         balanceOf[from] = balanceOf[from].sub(value);
         totalSupply = totalSupply.sub(value);
         emit Transfer(from, address(0), value);
@@ -680,7 +735,11 @@ contract BathToken {
         address to,
         uint256 value
     ) private {
+        // Bonus tokens
+        distributeBonusTokenRewards(from);
         balanceOf[from] = balanceOf[from].sub(value);
+        // Bonus tokens
+        distributeBonusTokenRewards(to);
         balanceOf[to] = balanceOf[to].add(value);
         emit Transfer(from, to, value);
     }

@@ -163,10 +163,12 @@ contract("Rubicon Router Test", async function (accounts) {
         { from: accounts[1] }
       );
 
-      assert.equal(
-        (await (await asset2).balanceOf(accounts[1])).toString(),
-        web3.utils.toWei((0.0499).toString())
+      const resultingAsset2Bal = (await (await asset2).balanceOf(accounts[1])).toString();
+      assert.isAtLeast(
+        parseInt(resultingAsset2Bal),
+        parseInt(web3.utils.toWei((0.0499).toString()))
       );
+      // assert.(resultingAsset2Bal).to.be.gt(web3.utils.toWei((0.0499).toString()));
     });
     it("getter for expected swap rate works", async function () {
       await asset1.faucet({ from: accounts[2] });
@@ -186,6 +188,19 @@ contract("Rubicon Router Test", async function (accounts) {
         { from: accounts[2] }
       );
 
+      // logIndented("got this expect", web3.utils.fromWei(expect))
+      // await router.swap(
+      //   web3.utils.toWei((0.25).toString()),
+      //   web3.utils.toWei((0.02495).toString()), // after fees, simply * 1 - 0.2%
+      //   [(await asset1).address, DAIInstance.address, (await asset2).address],
+      //   20,
+      //   { from: accounts[2] }
+      // );
+
+      // assert.equal(
+      //   (await (await asset2).balanceOf(accounts[2])).toString(),
+      //   web3.utils.toWei((0.02495).toString())
+      // );
       assert.equal(expect.toString(), web3.utils.toWei((0.02495).toString()));
     });
   });
